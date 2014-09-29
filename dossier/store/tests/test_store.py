@@ -14,7 +14,7 @@ import pytest
 from dossier.fc import FeatureCollection
 from dossier.store import FCStorage, Content, content_type, feature_index
 
-from dossier.store.tests.fixtures import configurator, config_local, kvl
+from dossier.store.tests import kvl
 
 
 logger = logging.getLogger(__name__)
