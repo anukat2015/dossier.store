@@ -15,7 +15,7 @@ from itertools import imap, izip, repeat
 from dossier.fc import FeatureCollection
 
 
-class Content (object):
+class Content(object):
     '''
     This class is a thin wrapper around the data that can be stored
     in a :class:`dossier.fc.store.FCStorage` database.
@@ -50,7 +50,7 @@ def feature_index(*feature_names):
     return _
 
 
-class FCStorage (object):
+class FCStorage(object):
     '''
     A feature collection database stores feature collections for content
     objects like profiles from external knowledge bases.
