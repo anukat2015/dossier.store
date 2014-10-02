@@ -4,9 +4,6 @@
    Copyright 2012-2014 Diffeo, Inc.
 
 '''
-from dossier.store.store import \
-    Content, FCStorage, content_type, feature_index
+from dossier.store.store import Store, feature_index
 
-__all__ = [
-    'Content', 'FCStorage', 'content_type', 'feature_index',
-]
+__all__ = ['Store', 'feature_index']
