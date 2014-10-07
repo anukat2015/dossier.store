@@ -46,4 +46,9 @@ setup(
     ],
     include_package_data=True,
     zip_safe=False,
+    entry_points={
+        'console_scripts': [
+            'dossier.store = dossier.store.run:main',
+        ],
+    },
 )
