@@ -35,9 +35,9 @@ def mk_fc_names(*names):
 
 
 def test_content_id_scan(fcstore):
-    fcstore.put('aA', mk_fc_names('x'))
-    fcstore.put('aB', mk_fc_names('y'))
-    fcstore.put('bC', mk_fc_names('z'))
+    fcstore.put([('aA', mk_fc_names('x'))])
+    fcstore.put([('aB', mk_fc_names('y'))])
+    fcstore.put([('bC', mk_fc_names('z'))])
 
     ids = list(fcstore.scan_prefix_ids('a'))
     assert 2 == len(ids)
@@ -46,7 +46,7 @@ def test_content_id_scan(fcstore):
 
 def test_fcs(fcstore):
     feata = mk_fc_names('foo', 'baz')
-    fcstore.put('a', feata)
+    fcstore.put([('a', feata)])
     assert fcstore.get('a') == feata
 
 
@@ -55,7 +55,7 @@ def test_fcs_index(fcstore):
                          feature_index('NAME'),
                          lambda s: s.lower().encode('utf-8'))
     feata = mk_fc_names('foo', 'baz')
-    fcstore.put('a', feata, indexes=True)
+    fcstore.put([('a', feata)], indexes=True)
     assert list(fcstore.index_scan(u'NAME', 'FoO'))[0] == 'a'
     assert list(fcstore.index_scan(u'NAME', 'bAz'))[0] == 'a'
     assert list(fcstore.index_scan_prefix(u'NAME', 'b'))[0] == 'a'
@@ -67,7 +67,7 @@ def test_fcs_bad_unicode_index(fcstore):
                          lambda s: unicode(s.lower()))
     feata = mk_fc_names('foo', 'baz')
     with pytest.raises(kvlayer.BadKey):
-        fcstore.put('a', feata, indexes=True)
+        fcstore.put([('a', feata)], indexes=True)
 
 
 def test_fcs_index_only_canonical(fcstore):
@@ -75,7 +75,7 @@ def test_fcs_index_only_canonical(fcstore):
                          feature_index('canonical_name'),
                          lambda s: s.lower().encode('utf-8'))
     feata = mk_fc_names('foo', 'baz')
-    fcstore.put('a', feata, indexes=True)
+    fcstore.put([('a', feata)], indexes=True)
     assert list(fcstore.index_scan(u'NAME', 'FoO'))[0] == 'a'
     assert len(list(fcstore.index_scan(u'NAME', 'bAz'))) == 0
 
@@ -85,7 +85,7 @@ def test_fcs_index_raw(fcstore):
                          feature_index('NAME'),
                          lambda s: s.lower().encode('utf-8'))
     feata = mk_fc_names('foo', 'baz')
-    fcstore.put('a', feata, indexes=False)
+    fcstore.put([('a', feata)], indexes=False)
 
     assert len(list(fcstore.index_scan(u'NAME', 'FoO'))) == 0
     assert len(list(fcstore.index_scan(u'NAME', 'bAz'))) == 0

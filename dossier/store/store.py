@@ -63,7 +63,7 @@ class Store(object):
 
     def __init__(self, kvl):
         '''Connects to a feature collection store.
-        
+
         This also initializes the underlying kvlayer namespace.
 
         :param kvl: kvlayer storage client
@@ -89,12 +89,12 @@ class Store(object):
             return None
         return FeatureCollection.loads(rows[0][1])
 
-    def put(self, content_id, fc, indexes=True):
-        '''Add a feature collection to the store.
+    def put(self, items, indexes=True):
+        '''Add feature collections to the store.
 
-        Adds a feature collection to the store with the identifier
-        ``content_id``. If a feature collection already exists with the 
-        identifier ``content_id``, then it is overwritten.
+        Given an iterable of tuples of the form
+        ``(content_id, feature collection)``, add each to the store
+        and overwrite any that already exist.
 
         This method optionally accepts a keyword argument `indexes`,
         which by default is set to ``True``. When it is ``True``,
@@ -105,15 +105,34 @@ class Store(object):
         currently no way to do this without running some sort of
         garbage collection process.)
 
-        :param str content_id: identifier for the content object
-                               represented by a feature collection
-        :param fc: feature collection
+        :param iterable items: iterable of
+                               ``(content_id, FeatureCollection)``.
         :type fc: :class:`dossier.fc.FeatureCollection`
         '''
-        self.kvl.put(self.TABLE, ((content_id,), fc.dumps()))
+        # So why accept an iterable? Ideally, some day, `kvlayer.put` would
+        # accept an iterable, so we should too.
+        #
+        # But we have to transform it to a list in order to update indexes
+        # anyway. Well, if we don't have to update indexes, then we can avoid
+        # loading everything into memory, which seems like an optimization
+        # worth having even if it's only some of the time.
+        #
+        # N.B. If you're thinking, "Just use itertools.tee", then you should
+        # heed this warning from Python docs: "This itertool may require
+        # significant auxiliary storage (depending on how much temporary data
+        # needs to be stored). In general, if one iterator uses most or all of
+        # the data before another iterator starts, it is faster to use list()
+        # instead of tee()."
+        #
+        # i.e., `tee` has to store everything into memory because `kvlayer`
+        # will exhaust the first iterator before indexes get updated.
+        items = list(items)
+        self.kvl.put(self.TABLE,
+                     *imap(lambda (cid, fc): ((cid,), fc.dumps()), items))
         if indexes:
-            for idx_name in self._indexes:
-                self._index_put(idx_name, (content_id, fc))
+            for cid, fc in items:
+                for idx_name in self._indexes:
+                    self._index_put(idx_name, (cid, fc))
 
     def delete(self, content_id):
         '''Delete a feature collection from the store.
