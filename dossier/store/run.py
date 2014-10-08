@@ -53,6 +53,12 @@ class App(yakonfig.cmd.ArgParseCmd):
     def do_get(self, args):
         print(self.store.get(args.content_id))
 
+    def args_delete_all(self, p):
+        pass
+
+    def do_delete_all(self, args):
+        self.store.delete_all()
+
 
 def main():
     p = argparse.ArgumentParser(
