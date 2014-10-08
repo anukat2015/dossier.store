@@ -36,7 +36,7 @@ class App(yakonfig.cmd.ArgParseCmd):
                     content_id = fc[args.id_feature].encode('utf-8')
                 else:
                     content_id = str(uuid.uuid4())
-                self.store.put(content_id, fc)
+                self.store.put([(content_id, fc)])
 
     def args_ids(self, p):
         pass
