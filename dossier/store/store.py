@@ -89,6 +89,16 @@ class Store(object):
             return None
         return FeatureCollection.loads(rows[0][1])
 
+    def get_many(self, content_id_list):
+        '''Yield (content_id, data) tuples for ids in list'''
+        content_id_keys = [tuplify(x) for x in content_id_list]
+        for row in self.kvl.get(self.TABLE, *content_id_keys):
+            content_id = row[0][0]
+            data = row[1]
+            if data is not None:
+                data = FeatureCollection.loads(data)
+            yield (content_id, data)
+
     def put(self, items, indexes=True):
         '''Add feature collections to the store.
 
@@ -172,7 +182,6 @@ class Store(object):
                 (``content_id``, :class:`dossier.fc.FeatureCollection`).
         '''
         # (id, id) -> ((id,), (id,))
-        tuplify = lambda v: () if v is () else tuple([v])
         key_ranges = [(tuplify(s), tuplify(e)) for s, e in key_ranges]
         return imap(lambda (cid, fc): (cid[0], FeatureCollection.loads(fc)),
                     self.kvl.scan(self.TABLE, *key_ranges))
@@ -195,7 +204,6 @@ class Store(object):
         :rtype: generator of ``content_id``
         '''
         # (id, id) -> ((id,), (id,))
-        tuplify = lambda v: () if v is () else tuple([v])
         key_ranges = [(tuplify(s), tuplify(e)) for s, e in key_ranges]
         scanner = self.kvl.scan_keys(self.TABLE, *key_ranges)
         return imap(itemgetter(0), scanner)
@@ -258,6 +266,38 @@ class Store(object):
         :rtype: generator of ``content_id``
         :raises: :exc:`~exceptions.KeyError`
         '''
+        return self._index_scan_prefix_impl(
+            idx_name, val_prefix, lambda k: k[2])
+
+    def index_scan_prefix_and_return_key(self, idx_name, val_prefix):
+        '''Returns ids that match a prefix of an indexed value, and the
+        specific key that matched the search prefix.
+
+        Returns a generator of (index key, content identifier) that
+        have an entry in the index ``idx_name`` with prefix
+        ``val_prefix`` (after index transforms are applied).
+
+        If the index named by ``idx_name`` is not registered, then a
+        :exc:`~exceptions.KeyError` is raised.
+
+        :param unicode idx_name: name of index
+        :param val_prefix: the value to use to search the index
+        :type val: unspecified (depends on the index, usually ``unicode``)
+        :rtype: generator of (``index key``, ``content_id``)
+        :raises: :exc:`~exceptions.KeyError`
+
+        '''
+        return self._index_scan_prefix_impl(
+            idx_name, val_prefix, lambda k: (k[1], k[2]))
+
+    def _index_scan_prefix_impl(self, idx_name, val_prefix, retfunc):
+        '''Implementation for index_scan_prefix and
+        index_scan_prefix_and_return_key, parameterized on return
+        value function.
+
+        retfunc gets passed a key tuple from the index:
+        (index name, index value, content_id)
+        '''
         idx = self._index(idx_name)['transform']
         val_prefix = idx(val_prefix)
 
@@ -265,7 +305,7 @@ class Store(object):
         s = (idx_name, val_prefix)
         e = (idx_name, val_prefix + '\xff')
         keys = self.kvl.scan_keys(self.INDEX_TABLE, (s, e))
-        return imap(lambda k: k[2], keys)
+        return imap(retfunc, keys)
 
     def define_index(self, idx_name, create, transform):
         '''Add an index to this store instance.
@@ -308,7 +348,7 @@ class Store(object):
                           *stored* value to the *index* value. This *must*
                           produce a value with type `str` (or `bytes`).
         '''
-        assert isinstance(idx_name, unicode)
+        assert isinstance(idx_name, (str,unicode))  # In Py3 we can drop 'str'
         self._indexes[idx_name] = {'create': create, 'transform': transform}
 
     # These methods are provided if you really need them, but hopefully
@@ -325,7 +365,8 @@ class Store(object):
         :type ids_and_fcs: ``[(content_id, FeatureCollection)]``
         '''
         keys = self._index_keys_for(idx_name, *ids_and_fcs)
-        with_vals = imap(lambda k: (k, '0'), keys)
+        with_vals = map(lambda k: (k, '0'), keys)
+        # TODO: use imap when kvl.put takes an iterable
         self.kvl.put(self.INDEX_TABLE, *with_vals)
 
     def _index_put_raw(self, idx_name, content_id, val):
@@ -358,13 +399,13 @@ class Store(object):
         '''
         idx = self._index(idx_name)
         icreate, itrans = idx['create'], idx['transform']
-        gens = izip(repeat(repeat(idx_name.encode('utf-8'))),
-                    imap(partial(icreate, itrans), ids_and_fcs),
-                    list(imap(lambda (cid, _): repeat(cid), ids_and_fcs)))
-        # gens is [repeat(name), gen of index values, repeat(content_id)]
-        # `name` is fixed for all values, but `content_id` is specific to each
-        # content object.
-        return (key for gs in gens for key in izip(*gs))
+        if isinstance(idx_name, unicode):
+            idx_name = idx_name.encode('utf-8')
+        for cid_fc in ids_and_fcs:
+            content_id = cid_fc[0]
+            for index_value in icreate(itrans, cid_fc):
+                if index_value:
+                    yield (idx_name, index_value, content_id)
 
     def _index(self, name):
         '''Returns index transforms for ``name``.
@@ -372,9 +413,16 @@ class Store(object):
         :type name: unicode
         :rtype: ``{ create |--> function, transform |--> function }``
         '''
-        assert isinstance(name, unicode)
         try:
             return self._indexes[name]
         except KeyError:
             raise KeyError('Index "%s" has not been registered with '
                            'this FC store.' % name)
+
+
+def tuplify(v):
+    if v is None:
+        return None
+    if isinstance(v, tuple):
+        return v
+    return (v,)
