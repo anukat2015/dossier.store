@@ -1,4 +1,4 @@
 include RELEASE-VERSION
 include version.py
 include LICENSE
-include README
+include README.md

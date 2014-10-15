@@ -25,7 +25,7 @@ setup(
     version=VERSION,
     description=DESC,
     license=read_file('LICENSE'),
-    long_description=read_file('README'),
+    long_description=read_file('README.md'),
     author=AUTHOR,
     author_email=AUTHOR_EMAIL,
     url=URL,
