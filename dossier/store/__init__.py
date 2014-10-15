@@ -9,7 +9,44 @@ interface consists of methods to query, search, add and remove feature
 collections from the store. It also provides functions for defining and
 searching indexes.
 
-An example showing how to store, retrieve and delete a feature
+Using a storage backend in your code requires a working ``kvlayer``
+configuration, which is usually written in a YAML file like so:
+
+.. code-block:: yaml
+
+    kvlayer:
+      app_name: store
+      namespace: dossier
+      storage_type: redis
+      storage_addresses: ["redis.example.com:6379"]
+
+And here's a full working example that uses local memory to store
+feature collections:
+
+.. code-block:: python
+
+    from dossier.fc import FeatureCollection
+    from dossier.store import Store
+    import kvlayer
+    import yakonfig
+
+    yaml = """
+    kvlayer:
+      app_name: store
+      namespace: dossier
+      storage_type: local
+    """
+    with yakonfig.defaulted_config([kvlayer], yaml=yaml):
+        store = Store(kvlayer.client())
+
+        fc = FeatureCollection({u'NAME': {'Foo': 1, 'Bar': 2}})
+        store.put([('1', fc)])
+        print store.get('1')
+
+See the documentation for :mod:`yakonfig` for more details on the
+configuration setup.
+
+Another example showing how to store, retrieve and delete a feature
 collection:
 
 .. code-block:: python

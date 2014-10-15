@@ -43,6 +43,7 @@ class Store(object):
 
     .. automethod:: __init__
     .. automethod:: get
+    .. automethod:: get_many
     .. automethod:: put
     .. automethod:: delete
     .. automethod:: delete_all
@@ -55,6 +56,7 @@ class Store(object):
 
     .. automethod:: index_scan
     .. automethod:: index_scan_prefix
+    .. automethod:: index_scan_prefix_and_return_key
     .. automethod:: define_index
     '''
     TABLE = 'fc'
@@ -102,7 +104,7 @@ class Store(object):
         then it is yielded with a data value of `None`.
 
         :type content_id_list: list<str>
-        :rtype yields tuple(str, :class:`dossier.fc.FeatureCollection`)
+        :rtype: yields tuple(str, :class:`dossier.fc.FeatureCollection`)
 
         '''
         content_id_keys = [tuplify(x) for x in content_id_list]
