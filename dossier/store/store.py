@@ -1,6 +1,10 @@
+'''dossier.store.Store
+
+.. This software is released under an MIT/X11 open source license.
+   Copyright 2012-2014 Diffeo, Inc.
+'''
 from __future__ import absolute_import, division, print_function
-from functools import partial
-from itertools import imap, izip, repeat
+from itertools import imap
 from operator import itemgetter
 
 from dossier.fc import FeatureCollection
@@ -75,13 +79,15 @@ class Store(object):
         self.kvl = kvl
 
     def get(self, content_id):
-        '''Retrieve a feature collection from the store.
+        '''Retrieve a feature collection from the store.  This is the same as
+        get_many([content_id])
 
         If the feature collection does not exist ``None`` is
         returned.
 
         :type content_id: str
         :rtype: :class:`dossier.fc.FeatureCollection`
+
         '''
         rows = list(self.kvl.get(self.TABLE, (content_id,)))
         assert len(rows) < 2, 'more than one FC with the same content id'
@@ -90,7 +96,15 @@ class Store(object):
         return FeatureCollection.loads(rows[0][1])
 
     def get_many(self, content_id_list):
-        '''Yield (content_id, data) tuples for ids in list'''
+        '''Yield (content_id, data) tuples for ids in list.
+
+        As with :meth:`get`, if a content_id in the list is missing,
+        then it is yielded with a data value of `None`.
+
+        :type content_id_list: list<str>
+        :rtype yields tuple(str, :class:`dossier.fc.FeatureCollection`)
+
+        '''
         content_id_keys = [tuplify(x) for x in content_id_list]
         for row in self.kvl.get(self.TABLE, *content_id_keys):
             content_id = row[0][0]
