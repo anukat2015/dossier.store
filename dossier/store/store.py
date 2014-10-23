@@ -59,6 +59,7 @@ class Store(object):
     .. automethod:: index_scan_prefix_and_return_key
     .. automethod:: define_index
     '''
+    config_name = 'dossier.store'
     TABLE = 'fc'
     INDEX_TABLE = 'fci'
 
@@ -67,7 +68,13 @@ class Store(object):
         INDEX_TABLE: (str, str, str), # idx name, value, content_id -> NUL
     }
 
-    def __init__(self, kvl):
+    def __new__(cls, kvlclient, impl=None, feature_indexes=None):
+        if impl is None:
+            return super(Store, cls).__new__(cls, kvlclient,
+                                             feature_indexes=feature_indexes)
+        return None
+
+    def __init__(self, kvlclient, feature_indexes=None):
         '''Connects to a feature collection store.
 
         This also initializes the underlying kvlayer namespace.
@@ -77,8 +84,8 @@ class Store(object):
         :rtype: :class:`Store`
         '''
         self._indexes = {}
-        kvl.setup_namespace(self._kvlayer_namespace)
-        self.kvl = kvl
+        kvlclient.setup_namespace(self._kvlayer_namespace)
+        self.kvl = kvlclient
 
     def get(self, content_id):
         '''Retrieve a feature collection from the store.  This is the same as
