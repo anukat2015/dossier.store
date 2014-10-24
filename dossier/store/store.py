@@ -5,9 +5,13 @@
 '''
 from __future__ import absolute_import, division, print_function
 from itertools import imap
+import logging
 from operator import itemgetter
 
 from dossier.fc import FeatureCollection
+
+
+logger = logging.getLogger(__name__)
 
 
 def feature_index(*feature_names):
@@ -28,6 +32,16 @@ def feature_index(*feature_names):
             for fval in fc.get(fname, {}).keys():
                 yield trans(fval)
     return _
+
+
+def _safe_lower_utf8(x):
+    '''x.lower().encode('utf-8') where x can be None, str, or unicode'''
+    if x is None or not isinstance(x, basestring):
+        return None
+    x = x.lower()
+    if isinstance(x, unicode):
+        return x.encode('utf-8')
+    return x
 
 
 class Store(object):
@@ -72,9 +86,12 @@ class Store(object):
         if impl is None:
             return super(Store, cls).__new__(cls, kvlclient,
                                              feature_indexes=feature_indexes)
-        return None
+        else:
+            mod, cls_name = impl.split(':')
+            cls = getattr(__import__(mod, fromlist=[cls_name]), cls_name)
+            return cls.__new__(cls, kvlclient, feature_indexes=feature_indexes)
 
-    def __init__(self, kvlclient, feature_indexes=None):
+    def __init__(self, kvlclient, impl=None, feature_indexes=None):
         '''Connects to a feature collection store.
 
         This also initializes the underlying kvlayer namespace.
@@ -86,6 +103,9 @@ class Store(object):
         self._indexes = {}
         kvlclient.setup_namespace(self._kvlayer_namespace)
         self.kvl = kvlclient
+        for name in feature_indexes or []:
+            logger.info('defining index "%s"', name)
+            self.define_index(name, feature_index(name), _safe_lower_utf8)
 
     def get(self, content_id):
         '''Retrieve a feature collection from the store.  This is the same as
