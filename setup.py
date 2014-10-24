@@ -42,7 +42,7 @@ setup(
         'pytest',
         'pytest-diffeo >= 0.1.4',
         'streamcorpus >= 0.3.27',
-        'yakonfig',
+        'yakonfig >= 0.7.2',
     ],
     include_package_data=True,
     zip_safe=False,
