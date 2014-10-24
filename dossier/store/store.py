@@ -104,7 +104,6 @@ class Store(object):
         kvlclient.setup_namespace(self._kvlayer_namespace)
         self.kvl = kvlclient
         for name in feature_indexes or []:
-            logger.info('defining index "%s"', name)
             self.define_index(name, feature_index(name), _safe_lower_utf8)
 
     def get(self, content_id):
@@ -392,6 +391,7 @@ class Store(object):
                           produce a value with type `str` (or `bytes`).
         '''
         assert isinstance(idx_name, (str,unicode))  # In Py3 we can drop 'str'
+        logger.info('defining index "%s"', idx_name)
         self._indexes[idx_name] = {'create': create, 'transform': transform}
 
     # These methods are provided if you really need them, but hopefully
