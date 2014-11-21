@@ -390,9 +390,17 @@ class Store(object):
                           *stored* value to the *index* value. This *must*
                           produce a value with type `str` (or `bytes`).
         '''
-        assert isinstance(idx_name, (str,unicode))  # In Py3 we can drop 'str'
+        assert isinstance(idx_name, (str, unicode))
         logger.info('defining index "%s"', idx_name)
+        idx_name = idx_name.decode('utf-8')
         self._indexes[idx_name] = {'create': create, 'transform': transform}
+
+    def index_names(self):
+        '''Returns a list of all defined index names.
+
+        :rtype: list of unicode
+        '''
+        return self._indexes.keys()
 
     # These methods are provided if you really need them, but hopefully
     # `put` is more convenient.
@@ -456,6 +464,7 @@ class Store(object):
         :type name: unicode
         :rtype: ``{ create |--> function, transform |--> function }``
         '''
+        name = name.decode('utf-8')
         try:
             return self._indexes[name]
         except KeyError:
