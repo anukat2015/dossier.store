@@ -19,7 +19,7 @@ compatible.
 ### Documentation
 
 API documentation with examples is available as part of the Dossier Stack 
-documentation: http://diffeo.com/dossier-stack
+documentation: http://diffeo.com/products/dossier-stack
 
 
 ### Basic example
