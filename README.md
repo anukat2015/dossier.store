@@ -12,14 +12,15 @@ it supports many database backends like PostgreSQL, Accumulo and Redis.
 pip install dossier.store
 ```
 
-Currently, `dossier.store` requires Python 2.7. It is not yet Python 3 
+Currently, `dossier.store` requires Python 2.7. It is not yet Python 3
 compatible.
 
 
 ### Documentation
 
-API documentation with examples is available as part of the Dossier Stack 
-documentation: http://diffeo.com/products/dossier-stack
+API documentation with examples is available as part of the Dossier Stack
+documentation:
+[http://dossier-stack.readthedocs.org](http://dossier-stack.readthedocs.org#module-dossier.store)
 
 
 ### Basic example
