@@ -23,7 +23,14 @@ class App(yakonfig.cmd.ArgParseCmd):
     @property
     def store(self):
         if self._store is None:
-            self._store = Store(kvlayer.client())
+            feature_indexes = None
+            try:
+                conf = yakonfig.get_global_config('dossier.store')
+                feature_indexes = conf['feature_indexes']
+            except KeyError:
+                pass
+            self._store = Store(kvlayer.client(),
+                                feature_indexes=feature_indexes)
         return self._store
 
     def args_load(self, p):
@@ -70,5 +77,5 @@ def main():
         description='Interact with the Dossier feature collection store.')
     app = App()
     app.add_arguments(p)
-    args = yakonfig.parse_args(p, [kvlayer, yakonfig])
+    args = yakonfig.parse_args(p, [kvlayer, yakonfig, Store])
     app.main(args)
