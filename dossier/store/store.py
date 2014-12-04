@@ -391,7 +391,6 @@ class Store(object):
                           produce a value with type `str` (or `bytes`).
         '''
         assert isinstance(idx_name, (str, unicode))
-        logger.info('defining index "%s"', idx_name)
         idx_name = idx_name.decode('utf-8')
         self._indexes[idx_name] = {'create': create, 'transform': transform}
 
