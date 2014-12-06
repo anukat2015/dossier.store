@@ -182,9 +182,8 @@ class Store(object):
         self.kvl.put(self.TABLE,
                      *imap(lambda (cid, fc): ((cid,), fc.dumps()), items))
         if indexes:
-            for cid, fc in items:
-                for idx_name in self._indexes:
-                    self._index_put(idx_name, (cid, fc))
+            for idx_name in self._indexes:
+                self._index_put(idx_name, *items)
 
     def delete(self, content_id):
         '''Delete a feature collection from the store.
