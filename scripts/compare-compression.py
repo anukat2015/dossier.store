@@ -5,6 +5,15 @@ FeatureCollections.
 .. This software is released under an MIT/X11 open source license.
    Copyright 2012-2014 Diffeo, Inc.
 
+Example output:
+
+raw:    423 MB of FC data, 1.000 compression, 0.000 seconds --> inf MB/sec compression, 0.000 seconds --> 0.000 MB/sec decompression
+xz:     34 MB of FC data, 0.081 compression, 164.662 seconds --> 0.208 MB/sec compression, 3.169 seconds --> 10.786 MB/sec decompression
+gz:     75 MB of FC data, 0.178 compression, 17.321 seconds --> 4.358 MB/sec compression, 2.584 seconds --> 29.220 MB/sec decompression
+bz2:    38 MB of FC data, 0.090 compression, 44.640 seconds --> 0.857 MB/sec compression, 10.356 seconds --> 3.696 MB/sec decompression
+snappy: 134 MB of FC data, 0.318 compression, 0.532 seconds --> 253.226 MB/sec compression, 10.356 seconds --> 13.001 MB/sec decompression
+
+
 '''
 from __future__ import division, print_function
 import argparse
@@ -25,7 +34,7 @@ from backports import lzma as xz
 import snappy as sz
 
 
-parser = argparse.ArgumentParser()
+parser = argparse.ArgumentParser(__doc__, usage='python compare-compression.py PATH-TO-.fc.xz')
 parser.add_argument('path', help='path to an XZ-compressed file to read for compression tests')
 args = parser.parse_args()
 
