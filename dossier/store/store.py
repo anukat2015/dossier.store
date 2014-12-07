@@ -8,6 +8,8 @@ from itertools import imap
 import logging
 from operator import itemgetter
 
+import snappy
+
 from dossier.fc import FeatureCollection
 
 
@@ -121,7 +123,7 @@ class Store(object):
         assert len(rows) < 2, 'more than one FC with the same content id'
         if len(rows) == 0 or rows[0][1] is None:
             return None
-        return FeatureCollection.loads(rows[0][1])
+        return fc_loads(rows[0][1])
 
     def get_many(self, content_id_list):
         '''Yield (content_id, data) tuples for ids in list.
@@ -138,7 +140,7 @@ class Store(object):
             content_id = row[0][0]
             data = row[1]
             if data is not None:
-                data = FeatureCollection.loads(data)
+                data = fc_loads(data)
             yield (content_id, data)
 
     def put(self, items, indexes=True):
@@ -180,7 +182,7 @@ class Store(object):
         # will exhaust the first iterator before indexes get updated.
         items = list(items)
         self.kvl.put(self.TABLE,
-                     *imap(lambda (cid, fc): ((cid,), fc.dumps()), items))
+                     *imap(lambda (cid, fc): ((cid,), fc_dumps(fc)), items))
         if indexes:
             for idx_name in self._indexes:
                 self._index_put(idx_name, *items)
@@ -224,7 +226,7 @@ class Store(object):
         '''
         # (id, id) -> ((id,), (id,))
         key_ranges = [(tuplify(s), tuplify(e)) for s, e in key_ranges]
-        return imap(lambda (cid, fc): (cid[0], FeatureCollection.loads(fc)),
+        return imap(lambda (cid, fc): (cid[0], fc_loads(fc)),
                     self.kvl.scan(self.TABLE, *key_ranges))
 
     def scan_ids(self, *key_ranges):
@@ -476,3 +478,11 @@ def tuplify(v):
     if isinstance(v, tuple):
         return v
     return (v,)
+
+
+def fc_loads(raw):
+    return FeatureCollection.loads(snappy.decompress(raw))
+
+
+def fc_dumps(fc):
+    return snappy.compress(fc.dumps())

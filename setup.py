@@ -41,6 +41,7 @@ setup(
         'kvlayer',
         'pytest',
         'pytest-diffeo >= 0.1.4',
+        'python-snappy',
         'streamcorpus >= 0.3.27',
         'yakonfig >= 0.7.2',
     ],
