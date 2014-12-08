@@ -6,12 +6,15 @@
 from __future__ import absolute_import, division, print_function
 
 import argparse
+from functools import partial
+from itertools import chain, islice
 import uuid
 
+import cbor
 import kvlayer
 import yakonfig
 
-from dossier.fc import FeatureCollectionChunk
+from dossier.fc import FeatureCollection, FeatureCollectionChunk
 from dossier.store import Store
 
 
@@ -38,17 +41,46 @@ class App(yakonfig.cmd.ArgParseCmd):
                        help='One or more feature collection chunk files.')
         p.add_argument('--id-feature', default=None,
                        help='The name of the feature containing an id.')
+        p.add_argument('--batch-size', default=10, type=int,
+                       help='The number of FCs to insert at a time.')
 
     def do_load(self, args):
+        get_content_id = partial(self.get_content_id, args.id_feature)
         for chunkfile in args.chunk_files:
-            for fc in FeatureCollectionChunk(path=chunkfile):
-                if args.id_feature is not None:
-                    if args.id_feature not in fc:
-                        raise KeyError(args.id_feature)
-                    content_id = fc[args.id_feature].encode('utf-8')
-                else:
-                    content_id = str(uuid.uuid4())
-                self.store.put([(content_id, fc)])
+            if True or not chunkfile.endswith('.fc'):
+                fc_chunker = FeatureCollectionChunk(path=chunkfile)
+                for i, fcs in enumerate(chunks(args.batch_size, fc_chunker)):
+                    fcs = list(fcs)
+                    content_ids = map(get_content_id, fcs)
+                    self.store.put(zip(content_ids, fcs))
+                    print('batch %d (%d FCs)' % (i, len(fcs)))
+            else:
+                # This currently seg faults.
+                fh = open(chunkfile, 'rb')
+                while True:
+                    try:
+                        chunk = cbor.load(fh)
+                    except EOFError:
+                        break
+                    fc = FeatureCollection.from_dict(chunk)
+                    self.load_one_fc(args.id_feature, fc)
+
+    def load_one_fc(self, id_feature, fc):
+        content_id = self.get_content_id(id_feature, fc)
+        self.store.put([(content_id, fc)])
+
+    def get_content_id(self, id_feature, fc):
+        if id_feature is None:
+            return str(uuid.uuid4())
+        else:
+            if id_feature not in fc:
+                raise KeyError(id_feature)
+            feat = fc[id_feature]
+            if isinstance(feat, unicode):
+                return feat.encode('utf-8')
+            else:
+                assert len(feat.keys()) == 1
+                return feat.keys()[0].encode('utf-8')
 
     def args_ids(self, p):
         pass
@@ -70,6 +102,12 @@ class App(yakonfig.cmd.ArgParseCmd):
 
     def do_delete_all(self, args):
         self.store.delete_all()
+
+
+def chunks(n, iterable):
+    iterable = iter(iterable)
+    while True:
+        yield chain([next(iterable)], islice(iterable, n-1))
 
 
 def main():
