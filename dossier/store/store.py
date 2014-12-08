@@ -38,8 +38,13 @@ def feature_index(*feature_names):
 
 def _safe_lower_utf8(x):
     '''x.lower().encode('utf-8') where x can be None, str, or unicode'''
-    if x is None or not isinstance(x, basestring):
+    if x is None:
         return None
+    if not isinstance(x, basestring):
+        try:
+            x = unicode(x)
+        except ValueError:
+            return None
     x = x.lower()
     if isinstance(x, unicode):
         return x.encode('utf-8')
