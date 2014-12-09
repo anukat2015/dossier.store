@@ -7,6 +7,7 @@ from __future__ import absolute_import, division, print_function
 from itertools import imap
 import logging
 from operator import itemgetter
+import struct
 
 import snappy
 
@@ -31,20 +32,29 @@ def feature_index(*feature_names):
     '''
     def _(trans, (cid, fc)):
         for fname in feature_names:
-            for fval in fc.get(fname, {}).keys():
-                yield trans(fval)
+            feat = fc.get(fname)
+            if feat is None:
+                continue
+            elif isinstance(feat, unicode):
+                yield trans(feat)
+            else:  # string counter, sparse/dense vector
+                for val in feat.iterkeys():
+                    yield trans(val)
     return _
 
 
-def _safe_lower_utf8(x):
+def basic_transform(val):
+    '''A basic transform for strings and integers.'''
+    if isinstance(val, int):
+        return struct.pack('>i', val)
+    else:
+        return safe_lower_utf8(val)
+
+
+def safe_lower_utf8(x):
     '''x.lower().encode('utf-8') where x can be None, str, or unicode'''
     if x is None:
         return None
-    if not isinstance(x, basestring):
-        try:
-            x = unicode(x)
-        except ValueError:
-            return None
     x = x.lower()
     if isinstance(x, unicode):
         return x.encode('utf-8')
@@ -111,7 +121,7 @@ class Store(object):
         kvlclient.setup_namespace(self._kvlayer_namespace)
         self.kvl = kvlclient
         for name in feature_indexes or []:
-            self.define_index(name, feature_index(name), _safe_lower_utf8)
+            self.define_index(name, feature_index(name), basic_transform)
 
     def get(self, content_id):
         '''Retrieve a feature collection from the store.  This is the same as
