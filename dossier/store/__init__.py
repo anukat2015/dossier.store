@@ -88,6 +88,6 @@ poor man's case insensitive search:
 .. autoclass:: Store
 .. autofunction:: feature_index
 '''
-from dossier.store.store import Store, feature_index, basic_transform
+from dossier.store.store import Store, feature_index
 
-__all__ = ['Store', 'feature_index', 'basic_transform']
+__all__ = ['Store', 'feature_index']
