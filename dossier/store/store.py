@@ -4,6 +4,7 @@
    Copyright 2012-2014 Diffeo, Inc.
 '''
 from __future__ import absolute_import, division, print_function
+from collections import OrderedDict
 from itertools import imap
 import logging
 from operator import itemgetter
@@ -117,7 +118,7 @@ class Store(object):
         :type kvl: :class:`kvlayer.AbstractStorage`
         :rtype: :class:`Store`
         '''
-        self._indexes = {}
+        self._indexes = OrderedDict()
         kvlclient.setup_namespace(self._kvlayer_namespace)
         self.kvl = kvlclient
         for name in feature_indexes or []:

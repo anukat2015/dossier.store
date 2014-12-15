@@ -95,3 +95,11 @@ def test_fcs_index_raw(fcstore):
     assert list(fcstore.index_scan(u'NAME', 'FoO'))[0] == 'a'
     assert list(fcstore.index_scan(u'NAME', 'bAz'))[0] == 'a'
     assert list(fcstore.index_scan_prefix(u'NAME', 'b'))[0] == 'a'
+
+
+def test_index_order(fcstore):
+    fcstore.define_index(u'a', None, None)
+    fcstore.define_index(u'z', None, None)
+    fcstore.define_index(u'd', None, None)
+    fcstore.define_index(u'c', None, None)
+    assert fcstore.index_names() == ['a', 'z', 'd', 'c']
