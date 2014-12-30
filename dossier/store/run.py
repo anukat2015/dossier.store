@@ -8,6 +8,7 @@ from __future__ import absolute_import, division, print_function
 import argparse
 from functools import partial
 from itertools import chain, islice
+import urllib
 import uuid
 
 import cbor
@@ -84,7 +85,7 @@ class App(yakonfig.cmd.ArgParseCmd):
             else:
                 assert len(feat.keys()) == 1
                 cid = feat.keys()[0].encode('utf-8')
-        return id_prefix + cid
+        return id_prefix + urllib.quote(cid, safe='~')
 
     def args_ids(self, p):
         pass
