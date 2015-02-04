@@ -85,7 +85,7 @@ class App(yakonfig.cmd.ArgParseCmd):
             else:
                 assert len(feat.keys()) == 1
                 cid = feat.keys()[0].encode('utf-8')
-        return id_prefix + urllib.quote(cid, safe='~')
+        return id_prefix + cid
 
     def args_ids(self, p):
         pass
