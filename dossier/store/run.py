@@ -88,19 +88,30 @@ class App(yakonfig.cmd.ArgParseCmd):
         return id_prefix + cid
 
     def args_ids(self, p):
-        pass
+        p.add_argument('--count-features', action='store_true',
+                       default=False, help='show count of features')
 
     def do_ids(self, args):
-        for id in self.store.scan_ids():
-            print(id)
+        for cid in self.store.scan_ids():
+            if args.count_features:
+                fc = self.store.get(cid)
+                print('%d features\t%r' % (len(fc), cid))
+            else:
+                print(cid)
 
     def args_get(self, p):
         p.add_argument('content_id', type=str,
                        help='The `content_id` of the feature '
                             'collection to show.')
+        p.add_argument('--feature-name', type=str,
+                       help='Name of a particular feature to show.')
 
     def do_get(self, args):
-        print(self.store.get(args.content_id))
+        fc = self.store.get(args.content_id)
+        if args.feature_name:
+            print(fc.get(args.feature_name))
+        else:
+            print(fc)
 
     def args_delete_all(self, p):
         pass
