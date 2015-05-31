@@ -8,6 +8,7 @@ from __future__ import absolute_import, division, print_function
 import argparse
 from functools import partial
 from itertools import chain, islice
+import json
 import urllib
 import uuid
 
@@ -15,7 +16,7 @@ import cbor
 import kvlayer
 import yakonfig
 
-from dossier.fc import FeatureCollection, FeatureCollectionChunk
+from dossier.fc import FeatureCollection, FeatureCollectionChunk, StringCounter
 from dossier.store import Store
 
 
@@ -90,9 +91,21 @@ class App(yakonfig.cmd.ArgParseCmd):
     def args_ids(self, p):
         p.add_argument('--count-features', action='store_true',
                        default=False, help='show count of features')
+        p.add_argument('--show-features', action='store_true',
+                       default=False, help='show count of features')
+        p.add_argument('--prefix-filter', help='prefix required of all'
+                       ' content_ids returned')
 
     def do_ids(self, args):
+        if args.show_features:
+            for (cid, fc) in self.store.scan():
+                if args.prefix_filter and \
+                   not cid.startswith(args.prefix_filter): continue
+                print('%r\n%s' % (cid, pretty_string(fc)))
+            return
         for cid in self.store.scan_ids():
+            if args.prefix_filter and \
+               not cid.startswith(args.prefix_filter): continue
             if args.count_features:
                 fc = self.store.get(cid)
                 print('%d features\t%r' % (len(fc), cid))
@@ -133,6 +146,20 @@ def cbor_iter(fh):
         except EOFError:
             break
         yield FeatureCollection.from_dict(chunk)
+
+
+def pretty_string(fc):
+    '''construct a nice looking string for an FC
+    '''
+    s = []
+    for fname, feature in sorted(fc.items()):
+        if isinstance(feature, StringCounter):
+            feature = ['%s: %s' % (k.encode('utf8'), v)
+                       for (k,v) in feature.most_common()]
+            feature = '\n\t' + '\n\t'.join(feature)
+
+        s.append('%s: %s' % (fname, feature))
+    return '\n'.join(s)
 
 
 def main():
