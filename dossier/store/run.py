@@ -92,7 +92,7 @@ class App(yakonfig.cmd.ArgParseCmd):
         p.add_argument('--count-features', action='store_true',
                        default=False, help='show count of features')
         p.add_argument('--show-features', action='store_true',
-                       default=False, help='show count of features')
+                       default=False, help='show strings from features')
         p.add_argument('--prefix-filter', help='prefix required of all'
                        ' content_ids returned')
 
@@ -126,6 +126,22 @@ class App(yakonfig.cmd.ArgParseCmd):
         else:
             print(fc)
 
+    def args_find(self, p):
+        p.add_argument('idx_name', type=str,
+                       help='The name of the feautre index.')
+        p.add_argument('query', type=str,
+                       help='The `query` to find in a feature index '
+                            'collection to show.')
+        p.add_argument('--show-features', action='store_true',
+                       default=False, help='show strings from features')
+
+    def do_find(self, args):
+        for cid in self.store.index_scan(args.idx_name, args.query):
+            print(cid)
+            if args.show_features:
+                fc = self.store.get(cid)
+                print(pretty_string(fc).encode('utf8'))
+
     def args_delete_all(self, p):
         pass
 
@@ -154,12 +170,11 @@ def pretty_string(fc):
     s = []
     for fname, feature in sorted(fc.items()):
         if isinstance(feature, StringCounter):
-            feature = ['%s: %s' % (k.encode('utf8'), v)
+            feature = [u'%s: %d' % (k, v)
                        for (k,v) in feature.most_common()]
-            feature = '\n\t' + '\n\t'.join(feature)
-
-        s.append('%s: %s' % (fname, feature))
-    return '\n'.join(s)
+            feature = u'\n\t' + u'\n\t'.join(feature)
+        s.append(fname + u': ' + feature)
+    return u'\n'.join(s)
 
 
 def main():
