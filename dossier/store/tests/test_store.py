@@ -20,9 +20,9 @@ from dossier.store.tests import kvl
 logger = logging.getLogger(__name__)
 
 
-@pytest.fixture
-def fcstore(kvl):
-    return Store(kvl)
+@pytest.fixture(scope='function', params=[True, False])
+def fcstore(kvl, request):
+    return Store(kvl, empty_index_names=request.param)
 
 
 def mk_fc_names(*names):
@@ -78,23 +78,6 @@ def test_fcs_index_only_canonical(fcstore):
     fcstore.put([('a', feata)], indexes=True)
     assert list(fcstore.index_scan(u'NAME', 'FoO'))[0] == 'a'
     assert len(list(fcstore.index_scan(u'NAME', 'bAz'))) == 0
-
-
-def test_fcs_index_raw(fcstore):
-    fcstore.define_index(u'NAME',
-                         feature_index('NAME'),
-                         lambda s: s.lower().encode('utf-8'))
-    feata = mk_fc_names('foo', 'baz')
-    fcstore.put([('a', feata)], indexes=False)
-
-    assert len(list(fcstore.index_scan(u'NAME', 'FoO'))) == 0
-    assert len(list(fcstore.index_scan(u'NAME', 'bAz'))) == 0
-
-    fcstore._index_put_raw(u'NAME', 'a', 'foo')
-    fcstore._index_put_raw(u'NAME', 'a', 'baz')
-    assert list(fcstore.index_scan(u'NAME', 'FoO'))[0] == 'a'
-    assert list(fcstore.index_scan(u'NAME', 'bAz'))[0] == 'a'
-    assert list(fcstore.index_scan_prefix(u'NAME', 'b'))[0] == 'a'
 
 
 def test_index_order(fcstore):

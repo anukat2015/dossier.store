@@ -100,16 +100,25 @@ class Store(object):
         INDEX_TABLE: (str, str, str), # idx name, value, content_id -> NUL
     }
 
-    def __new__(cls, kvlclient, impl=None, feature_indexes=None):
+    def __new__(cls, kvlclient, impl=None, feature_indexes=None,
+                 empty_index_names=False):
         if impl is None:
-            return super(Store, cls).__new__(cls, kvlclient,
-                                             feature_indexes=feature_indexes)
+            return super(Store, cls).__new__(
+                cls, kvlclient,
+                feature_indexes=feature_indexes, 
+                empty_index_names=empty_index_names
+            )
         else:
             mod, cls_name = impl.split(':')
             cls = getattr(__import__(mod, fromlist=[cls_name]), cls_name)
-            return cls.__new__(cls, kvlclient, feature_indexes=feature_indexes)
+            return cls.__new__(
+                cls, kvlclient, 
+                feature_indexes=feature_indexes,
+                empty_index_names=empty_index_names
+            )
 
-    def __init__(self, kvlclient, impl=None, feature_indexes=None):
+    def __init__(self, kvlclient, impl=None, feature_indexes=None,
+                 empty_index_names=False):
         '''Connects to a feature collection store.
 
         This also initializes the underlying kvlayer namespace.
@@ -118,6 +127,7 @@ class Store(object):
         :type kvl: :class:`kvlayer.AbstractStorage`
         :rtype: :class:`Store`
         '''
+        self.empty_index_names = empty_index_names
         self._indexes = OrderedDict()
         kvlclient.setup_namespace(self._kvlayer_namespace)
         self.kvl = kvlclient
@@ -305,7 +315,11 @@ class Store(object):
         :raises: :exc:`~exceptions.KeyError`
         '''
         idx = self._index(idx_name)['transform']
-        key = (idx_name.encode('utf-8'), idx(val))
+        if self.empty_index_names:
+            key_prefix = r''
+        else:
+            key_prefix = idx_name.encode('utf-8')
+        key = (key_prefix, idx(val))
         keys = self.kvl.scan_keys(self.INDEX_TABLE, (key, key))
         return imap(lambda k: k[2], keys)
 
@@ -359,8 +373,10 @@ class Store(object):
         '''
         idx = self._index(idx_name)['transform']
         val_prefix = idx(val_prefix)
-
-        idx_name = idx_name.encode('utf-8')
+        if self.empty_index_names:
+            idx_name = r''
+        else:
+            idx_name = idx_name.encode('utf-8')
         s = (idx_name, val_prefix)
         e = (idx_name, val_prefix + '\xff')
         keys = self.kvl.scan_keys(self.INDEX_TABLE, (s, e))
@@ -436,23 +452,6 @@ class Store(object):
         # TODO: use imap when kvl.put takes an iterable
         self.kvl.put(self.INDEX_TABLE, *with_vals)
 
-    def _index_put_raw(self, idx_name, content_id, val):
-        '''Add new raw index values.
-
-        Adds a new index key corresponding to
-        ``(idx_name, transform(val), content_id)``.
-
-        This method bypasses the *creation* of indexes from content
-        objects, but values are still transformed.
-
-        :type idx_name: unicode
-        :type content_id: str
-        :type val: unspecified (depends on the index, usually ``unicode``)
-        '''
-        idx = self._index(idx_name)['transform']
-        key = (idx_name.encode('utf-8'), idx(val), content_id)
-        self.kvl.put(self.INDEX_TABLE, (key, '0'))
-
     def _index_keys_for(self, idx_name, *ids_and_fcs):
         '''Returns a generator of index triples.
 
@@ -468,6 +467,8 @@ class Store(object):
         icreate, itrans = idx['create'], idx['transform']
         if isinstance(idx_name, unicode):
             idx_name = idx_name.encode('utf-8')
+        if self.empty_index_names:
+            idx_name = r''
         for cid_fc in ids_and_fcs:
             content_id = cid_fc[0]
             for index_value in icreate(itrans, cid_fc):
