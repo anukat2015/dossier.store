@@ -59,6 +59,8 @@ def test_fcs_index(fcstore):
     assert list(fcstore.index_scan(u'NAME', 'FoO'))[0] == 'a'
     assert list(fcstore.index_scan(u'NAME', 'bAz'))[0] == 'a'
     assert list(fcstore.index_scan_prefix(u'NAME', 'b'))[0] == 'a'
+    assert list(fcstore.index_scan_prefix_and_return_key(u'NAME', 'bA'))[0] \
+        == ('baz', 'a')
 
 
 def test_fcs_bad_unicode_index(fcstore):

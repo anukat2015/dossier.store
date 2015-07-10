@@ -347,7 +347,7 @@ class Store(object):
 
         '''
         return self._index_scan_prefix_impl(
-            idx_name, val_prefix, lambda k: (k[1], k[2]))
+            idx_name, val_prefix, lambda k: (k[0], k[2]))
 
     def _index_scan_prefix_impl(self, idx_name, val_prefix, retfunc):
         '''Implementation for index_scan_prefix and
