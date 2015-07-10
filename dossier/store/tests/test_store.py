@@ -14,13 +14,13 @@ import kvlayer
 from dossier.fc import FeatureCollection
 from dossier.store import Store, feature_index
 
-from dossier.store.tests import kvl
+from dossier.store.tests import kvl  # noqa
 
 
 logger = logging.getLogger(__name__)
 
 
-@pytest.fixture
+@pytest.fixture  # noqa
 def fcstore(kvl):
     return Store(kvl)
 
@@ -103,3 +103,19 @@ def test_index_order(fcstore):
     fcstore.define_index(u'd', None, None)
     fcstore.define_index(u'c', None, None)
     assert fcstore.index_names() == ['a', 'z', 'd', 'c']
+
+
+def test_index_key_flip(fcstore):
+    # Make sure only values from the specified index are returned.
+    fca, fcb = FeatureCollection(), FeatureCollection()
+    fca[u'a']['foo'] = 1
+    fca[u'b']['foo'] = 1
+
+    fcstore.define_index(
+            u'a', feature_index('a'), lambda s: s.lower().encode('utf-8'))
+    fcstore.define_index(
+            u'b', feature_index('b'), lambda s: s.lower().encode('utf-8'))
+
+    fcstore.put([('fca', fca), ('fcb', fcb)])
+
+    assert list(fcstore.index_scan(u'a', u'foo')) == ['fca']

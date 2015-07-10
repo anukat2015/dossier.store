@@ -96,8 +96,8 @@ class Store(object):
     INDEX_TABLE = 'fci'
 
     _kvlayer_namespace = {
-        TABLE: (str,),                # content_id -> feature collection
-        INDEX_TABLE: (str, str, str), # idx name, value, content_id -> NUL
+        TABLE: (str,),                 # content_id -> feature collection
+        INDEX_TABLE: (str, str, str),  # idx name, value, content_id -> NUL
     }
 
     def __new__(cls, kvlclient, impl=None, feature_indexes=None):
@@ -305,7 +305,7 @@ class Store(object):
         :raises: :exc:`~exceptions.KeyError`
         '''
         idx = self._index(idx_name)['transform']
-        key = (idx_name.encode('utf-8'), idx(val))
+        key = (idx(val), idx_name.encode('utf-8'))
         keys = self.kvl.scan_keys(self.INDEX_TABLE, (key, key))
         return imap(lambda k: k[2], keys)
 
@@ -361,8 +361,8 @@ class Store(object):
         val_prefix = idx(val_prefix)
 
         idx_name = idx_name.encode('utf-8')
-        s = (idx_name, val_prefix)
-        e = (idx_name, val_prefix + '\xff')
+        s = (val_prefix, idx_name)
+        e = (val_prefix + '\xff', idx_name)
         keys = self.kvl.scan_keys(self.INDEX_TABLE, (s, e))
         return imap(retfunc, keys)
 
@@ -450,7 +450,7 @@ class Store(object):
         :type val: unspecified (depends on the index, usually ``unicode``)
         '''
         idx = self._index(idx_name)['transform']
-        key = (idx_name.encode('utf-8'), idx(val), content_id)
+        key = (idx(val), idx_name.encode('utf-8'), content_id)
         self.kvl.put(self.INDEX_TABLE, (key, '0'))
 
     def _index_keys_for(self, idx_name, *ids_and_fcs):
@@ -472,7 +472,7 @@ class Store(object):
             content_id = cid_fc[0]
             for index_value in icreate(itrans, cid_fc):
                 if index_value:
-                    yield (idx_name, index_value, content_id)
+                    yield (index_value, idx_name, content_id)
 
     def _index(self, name):
         '''Returns index transforms for ``name``.
