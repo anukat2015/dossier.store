@@ -11,7 +11,7 @@ import pytest
 
 import kvlayer
 
-from dossier.fc import FeatureCollection
+from dossier.fc import FeatureCollection as FC
 from dossier.store import Store, feature_index
 
 from dossier.store.tests import kvl  # noqa
@@ -27,7 +27,7 @@ def fcstore(kvl):
 
 def mk_fc_names(*names):
     assert len(names) > 0
-    feat = FeatureCollection()
+    feat = FC()
     feat[u'canonical_name'][names[0]] = 1
     for name in names:
         feat[u'NAME'][name] += 1
@@ -109,7 +109,7 @@ def test_index_order(fcstore):
 
 def test_index_key_flip(fcstore):
     # Make sure only values from the specified index are returned.
-    fca, fcb = FeatureCollection(), FeatureCollection()
+    fca, fcb = FC(), FC()
     fca[u'a']['foo'] = 1
     fca[u'b']['foo'] = 1
 
@@ -121,3 +121,25 @@ def test_index_key_flip(fcstore):
     fcstore.put([('fca', fca), ('fcb', fcb)])
 
     assert list(fcstore.index_scan(u'a', u'foo')) == ['fca']
+
+
+def test_one_to_many_indexing(kvl):  # noqa
+    # This config defines an index named `foo` that automatically indexes
+    # values in the `bar` and `baz` features. This means that an index scan
+    # on the `foo` index will check values in the `bar` and `baz` features.
+    index_config = [{'foo': ['bar', 'baz']}]
+    store = Store(kvl, feature_indexes=index_config)
+
+    fcx, fcy, fcz = FC(), FC(), FC()
+    fcx['unrelated']['a'] = 1
+    fcy['bar']['a'] = 1
+    fcy['baz']['a'] = 1
+    fcz['baz']['a'] = 1
+    fcy['baz']['c'] = 1
+    fcz['baz']['b'] = 1
+
+    store.put([('x', fcx), ('y', fcy), ('z', fcz)])
+
+    assert list(store.index_scan('foo', 'a')) == ['y', 'z']
+    assert list(store.index_scan('foo', 'b')) == ['z']
+    assert list(store.index_scan('foo', 'c')) == ['y']

@@ -4,7 +4,7 @@
    Copyright 2012-2014 Diffeo, Inc.
 '''
 from __future__ import absolute_import, division, print_function
-from collections import OrderedDict
+from collections import OrderedDict, Mapping
 from itertools import imap
 import logging
 from operator import itemgetter
@@ -121,8 +121,15 @@ class Store(object):
         self._indexes = OrderedDict()
         kvlclient.setup_namespace(self._kvlayer_namespace)
         self.kvl = kvlclient
-        for name in feature_indexes or []:
-            self.define_index(name, feature_index(name), basic_transform)
+        for x in feature_indexes or []:
+            if isinstance(x, Mapping):
+                assert len(x) == 1, 'only one mapping per index entry allowed'
+                name = x.keys()[0]
+                features = x[name]
+            else:
+                name = x
+                features = [x]
+            self.define_index(name, feature_index(*features), basic_transform)
 
     def get(self, content_id):
         '''Retrieve a feature collection from the store.  This is the same as
