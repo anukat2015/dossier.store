@@ -123,8 +123,8 @@ def test_scan_all(store, fcs):
     put_fcs(store, fcs)
     assert_set_eq(store.scan(), map(lambda (_, x): x, fcs))
 
-    assert frozenset(store.scan_ids()) \
-        == frozenset(['boss', 'patti', 'big-man'])
+    assert list(store.scan_ids()) \
+        == list(['big-man', 'boss', 'patti'])
 
 
 def test_scan_some(store, fcs):
@@ -245,7 +245,7 @@ def test_fc_type(store, fcs):
         == frozenset(['foo1', 'foo2'])
 
     # Make sure prefix id scans respect fc_type.
-    assert frozenset(store.scan_prefix_ids('f')) \
+    assert frozenset(store.scan_prefix_ids('f', fc_type=None)) \
         == frozenset(['foo1', 'foo2'])
     assert frozenset(store.scan_prefix_ids('f', fc_type='fc')) \
         == frozenset()
@@ -253,9 +253,23 @@ def test_fc_type(store, fcs):
         == frozenset(['foo1', 'foo2'])
 
     # Make sure canopy scans respect fc_type.
-    assert frozenset(store.canopy_scan_ids('foo1')) \
+    assert frozenset(store.canopy_scan_ids('foo1', fc_type=None)) \
         == frozenset(['boss', 'patti', 'foo2'])
     assert frozenset(store.canopy_scan_ids('foo1', fc_type='fc')) \
         == frozenset(['boss', 'patti'])
     assert frozenset(store.canopy_scan_ids('foo1', fc_type='zzz')) \
         == frozenset(['foo2'])
+
+    # And simple index scans too.
+    assert frozenset(store.index_scan('boNAME', 'patti', fc_type=None)) \
+        == frozenset(['patti', 'foo1'])
+    assert frozenset(store.index_scan('boNAME', 'patti', fc_type='fc')) \
+        == frozenset(['patti'])
+    assert frozenset(store.index_scan('boNAME', 'patti', fc_type='zzz')) \
+        == frozenset(['foo1'])
+
+
+def test_index_scan(store, fcs):
+    put_fcs(store, fcs)
+    assert frozenset(store.index_scan('boNAME', 'the')) \
+        == frozenset(['boss', 'big-man'])
