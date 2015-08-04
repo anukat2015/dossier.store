@@ -10,14 +10,14 @@ import logging
 
 from dossier.fc import FeatureCollection as FC
 
-from elasticsearch import Elasticsearch
+from elasticsearch import Elasticsearch, NotFoundError
 from elasticsearch.helpers import bulk, scan
 
 logger = logging.getLogger(__name__)
 
 
 class ElasticStore(object):
-    def __init__(self, hosts=None, namespace='d01', feature_indexes=None):
+    def __init__(self, hosts=None, namespace=None, feature_indexes=None):
         self.conn = Elasticsearch(hosts=hosts)
         self.index = '%s_fcs' % namespace
         self.type = 'fc'
@@ -30,19 +30,25 @@ class ElasticStore(object):
             self._create()
 
     def get(self, content_id, feature_names=None):
-        resp = self.conn.get(index=self.index, doc_type=self.type,
-                             id=content_id,
-                             _source=self._source(feature_names))
-        return FC(resp['_source']['fc'])
+        try:
+            resp = self.conn.get(index=self.index, doc_type=self.type,
+                                 id=content_id,
+                                 _source=self._source(feature_names))
+            return FC(resp['_source']['fc'])
+        except NotFoundError:
+            return None
+        except:
+            raise
 
     def get_many(self, content_id_list, feature_names=None):
         resp = self.conn.mget(index=self.index, doc_type=self.type,
                               _source=self._source(feature_names),
                               body={'ids': content_id_list})
         for doc in resp['docs']:
-            yield FC(doc['_source']['fc'])
+            fc = FC(doc['_source']['fc']) if doc['found'] else None
+            yield doc['_id'], fc
 
-    def put(self, items, indexes=True):
+    def put(self, items):
         actions = []
         for cid, fc in items:
             idxs = defaultdict(list)
@@ -59,6 +65,9 @@ class ElasticStore(object):
                 }),
             })
         bulk(self.conn, actions)
+
+    def sync(self):
+        self.conn.indices.refresh(index=self.index)
 
     def scan(self, *key_ranges, **kwargs):
         for hit in self._scan(*key_ranges, **kwargs)['hits']['hits']:
@@ -86,16 +95,48 @@ class ElasticStore(object):
         if self.conn.indices.exists(index=self.index):
             self.conn.indices.delete(index=self.index)
 
-    def canopy_scan(self, query_fc, feature_names=None):
-        for hit in self._canopy_scan(query_fc, feature_names=feature_names):
-            yield FC(hit['_source']['fc'])
+    def canopy_scan(self, query_id, query_fc=None, feature_names=None):
+        it = self._canopy_scan(query_id, query_fc, feature_names=feature_names)
+        for hit in it:
+            yield hit['_id'], FC(hit['_source']['fc'])
 
-    def canopy_scan_ids(self, query_fc):
-        for hit in self._canopy_scan(query_fc, feature_names=False):
+    def canopy_scan_ids(self, query_id, query_fc=None):
+        it = self._canopy_scan(query_id, query_fc, feature_names=False)
+        for hit in it:
             yield hit['_id']
 
-    def _canopy_scan(self, query_fc, feature_names=None):
-        ids = set()
+    def _canopy_scan(self, query_id, query_fc, feature_names=None):
+        # Why are we running multiple scans? Why are we deduplicating?
+        #
+        # It turns out that, in our various systems, it can be important to
+        # prioritize the order of results returned in a canopy scan based on
+        # the feature index that is being searched. For example, we typically
+        # want to start a canopy scan with the results from a search on `NAME`,
+        # which we don't want to be mingled with the results from a search on
+        # some other feature.
+        #
+        # The simplest way to guarantee this type of prioritization is to run
+        # a query for each index in the order in which they were defined.
+        #
+        # This has some downsides:
+        #
+        # 1. We return *all* results for the first index before ever returning
+        #    results for the second.
+        # 2. Since we're running multiple queries, we could get back results
+        #    we've already retrieved in a previous query.
+        #
+        # We accept (1) for now.
+        #
+        # To fix (2), we keep track of all ids we've seen and include them
+        # as a filter in subsequent queries.
+        if query_fc is None:
+            # I think we can actually tell ES to pull the fields directly
+            # from the query server-side, but that's a premature optimization
+            # at this point. ---AG
+            query_fc = self.get(query_id)
+        if query_fc is None:
+            raise KeyError(query_id)
+        ids = set([query_id])
         for iname in self.indexes:
             fname = iname[4:]
             terms = query_fc[fname].keys()
@@ -164,6 +205,13 @@ class ElasticStore(object):
     def _range_filters(self, *key_ranges):
         filters = []
         for s, e in key_ranges:
+            # Make the range inclusive.
+            if isinstance(e, basestring):
+                # We need a valid codepoint, so use the max.
+                e += u'\U0010FFFF'
+            elif isinstance(e, int):
+                e += 1
+
             if s == () and e == ():
                 filters.append({'match_all': {}})
             elif e == ():
@@ -188,9 +236,20 @@ class ElasticStore(object):
                     },
                 }],
                 'fc': {
+                    '_id': {
+                        'index': 'not_analyzed',  # allows range queries
+                    },
                     'properties': self._get_index_mappings(),
                 },
             })
+        # It is possible to create an index and quickly launch a request
+        # that will fail because the index hasn't been set up yet. Usually,
+        # you'll get a "no active shards available" error.
+        #
+        # Since index creation is a very rare operation (it only happens
+        # when the index doesn't already exist), we sit and wait for the
+        # cluster to become healthy.
+        self.conn.cluster.health(index=self.index, wait_for_status='yellow')
 
     def _get_index_mappings(self):
         maps = {}
