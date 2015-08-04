@@ -217,3 +217,45 @@ def test_canopy_scan_emphemeral(store, fcs):
     query_fc['boNAME']['mayonnaise'] += 1
     assert frozenset(store.canopy_scan_ids(query_id, query_fc)) \
         == frozenset(['patti'])
+
+
+def test_fc_type(store, fcs):
+    put_fcs(store, fcs)
+    foo1 = FC({
+        'NAME': {'Foo Bar': 1},
+        'boNAME': {'bruce': 1, 'patti': 1, 'foo': 1, 'bar': 1},
+    })
+    foo2 = FC({
+        'NAME': {'Foo Baz': 1},
+        'boNAME': {'foo': 1, 'baz': 1},
+    })
+    store.put([('foo1', foo1), ('foo2', foo2)], fc_type='zzz')
+    store.sync()
+
+    # Are they really there?
+    assert store.get('foo1') == foo1
+    assert store.get('foo2') == foo2
+
+    # Make sure id scans respect fc_type.
+    assert frozenset(store.scan_ids()) \
+        == frozenset(['foo1', 'foo2', 'boss', 'big-man', 'patti'])
+    assert frozenset(store.scan_ids(fc_type='fc')) \
+        == frozenset(['boss', 'big-man', 'patti'])
+    assert frozenset(store.scan_ids(fc_type='zzz')) \
+        == frozenset(['foo1', 'foo2'])
+
+    # Make sure prefix id scans respect fc_type.
+    assert frozenset(store.scan_prefix_ids('f')) \
+        == frozenset(['foo1', 'foo2'])
+    assert frozenset(store.scan_prefix_ids('f', fc_type='fc')) \
+        == frozenset()
+    assert frozenset(store.scan_prefix_ids('f', fc_type='zzz')) \
+        == frozenset(['foo1', 'foo2'])
+
+    # Make sure canopy scans respect fc_type.
+    assert frozenset(store.canopy_scan_ids('foo1')) \
+        == frozenset(['boss', 'patti', 'foo2'])
+    assert frozenset(store.canopy_scan_ids('foo1', fc_type='fc')) \
+        == frozenset(['boss', 'patti'])
+    assert frozenset(store.canopy_scan_ids('foo1', fc_type='zzz')) \
+        == frozenset(['foo2'])

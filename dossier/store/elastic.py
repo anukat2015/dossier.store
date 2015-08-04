@@ -17,10 +17,12 @@ logger = logging.getLogger(__name__)
 
 
 class ElasticStore(object):
-    def __init__(self, hosts=None, namespace=None, feature_indexes=None):
+    def __init__(self, hosts=None, namespace=None, default_fc_type='fc',
+                 feature_indexes=None):
         self.conn = Elasticsearch(hosts=hosts)
         self.index = '%s_fcs' % namespace
         self.type = 'fc'
+        self.default_fc_type = default_fc_type
         self._normalize_feature_indexes(feature_indexes)
 
         if not self.conn.indices.exists(index=self.index):
@@ -48,7 +50,8 @@ class ElasticStore(object):
             fc = FC(doc['_source']['fc']) if doc['found'] else None
             yield doc['_id'], fc
 
-    def put(self, items):
+    def put(self, items, fc_type=None):
+        fc_type = fc_type or self.default_fc_type
         actions = []
         for cid, fc in items:
             idxs = defaultdict(list)
@@ -61,6 +64,7 @@ class ElasticStore(object):
                 '_id': cid,
                 '_op_type': 'index',
                 '_source': dict(idxs, **{
+                    'fc_type': fc_type,
                     'fc': fc.to_dict(),
                 }),
             })
@@ -73,18 +77,20 @@ class ElasticStore(object):
         for hit in self._scan(*key_ranges, **kwargs)['hits']['hits']:
             yield FC(hit['_source']['fc'])
 
-    def scan_ids(self, *key_ranges):
-        resp = self._scan(*key_ranges, feature_names=False)
+    def scan_ids(self, *key_ranges, **kwargs):
+        kwargs['feature_names'] = False
+        resp = self._scan(*key_ranges, **kwargs)
         for hit in resp['hits']['hits']:
             yield hit['_id']
 
-    def scan_prefix(self, prefix, feature_names=None):
-        resp = self._scan_prefix(prefix, feature_names=feature_names)
+    def scan_prefix(self, prefix, feature_names=None, fc_type=None):
+        resp = self._scan_prefix(prefix, feature_names=feature_names,
+                                 fc_type=fc_type)
         for hit in resp['hits']['hits']:
             yield FC(hit['_source']['fc'])
 
-    def scan_prefix_ids(self, prefix):
-        resp = self._scan_prefix(prefix, feature_names=False)
+    def scan_prefix_ids(self, prefix, fc_type=None):
+        resp = self._scan_prefix(prefix, feature_names=False, fc_type=fc_type)
         for hit in resp['hits']['hits']:
             yield hit['_id']
 
@@ -95,17 +101,21 @@ class ElasticStore(object):
         if self.conn.indices.exists(index=self.index):
             self.conn.indices.delete(index=self.index)
 
-    def canopy_scan(self, query_id, query_fc=None, feature_names=None):
-        it = self._canopy_scan(query_id, query_fc, feature_names=feature_names)
+    def canopy_scan(self, query_id, query_fc=None,
+                    feature_names=None, fc_type=None):
+        it = self._canopy_scan(query_id, query_fc,
+                               feature_names=feature_names, fc_type=fc_type)
         for hit in it:
             yield hit['_id'], FC(hit['_source']['fc'])
 
-    def canopy_scan_ids(self, query_id, query_fc=None):
-        it = self._canopy_scan(query_id, query_fc, feature_names=False)
+    def canopy_scan_ids(self, query_id, query_fc=None, fc_type=None):
+        it = self._canopy_scan(query_id, query_fc, feature_names=False,
+                               fc_type=fc_type)
         for hit in it:
             yield hit['_id']
 
-    def _canopy_scan(self, query_id, query_fc, feature_names=None):
+    def _canopy_scan(self, query_id, query_fc,
+                     feature_names=None, fc_type=None):
         # Why are we running multiple scans? Why are we deduplicating?
         #
         # It turns out that, in our various systems, it can be important to
@@ -140,25 +150,30 @@ class ElasticStore(object):
         for iname in self.indexes:
             fname = iname[4:]
             terms = query_fc[fname].keys()
-            hits = scan(self.conn, query={
-                '_source': self._source(feature_names),
-                'query': {
-                    'constant_score': {
-                        'filter': {
-                            'and': [{
-                                'not': {
-                                    'ids': {
-                                        'values': list(ids),
-                                    },
+            query = {
+                'constant_score': {
+                    'filter': {
+                        'and': [{
+                            'not': {
+                                'ids': {
+                                    'values': list(ids),
                                 },
-                            }, {
-                                'terms': {
-                                    iname: terms,
-                                },
-                            }],
-                        },
+                            },
+                        }, {
+                            'terms': {
+                                iname: terms,
+                            },
+                        }],
                     },
                 },
+            }
+            if fc_type is not None:
+                query['constant_score']['filter']['and'].append({
+                    'term': {'fc_type': fc_type},
+                })
+            hits = scan(self.conn, query={
+                '_source': self._source(feature_names),
+                'query': query,
             })
             for hit in hits:
                 ids.add(hit['_id'])
@@ -166,7 +181,10 @@ class ElasticStore(object):
 
     def _scan(self, *key_ranges, **kwargs):
         feature_names = kwargs.get('feature_names')
+        fc_type = kwargs.get('fc_type') or None
         range_filters = self._range_filters(*key_ranges)
+        if fc_type is not None:
+            range_filters.append({'term': {'fc_type': fc_type}})
         return self.conn.search(index=self.index, doc_type=self.type,
                                 _source=self._source(feature_names),
                                 body={
@@ -179,20 +197,25 @@ class ElasticStore(object):
                                     },
                                 })
 
-    def _scan_prefix(self, prefix, feature_names=None):
+    def _scan_prefix(self, prefix, feature_names=None, fc_type=None):
+        query = {
+            'constant_score': {
+                'filter': {
+                    'and': [{
+                        'prefix': {
+                            '_id': prefix,
+                        },
+                    }],
+                },
+            },
+        }
+        if fc_type is not None:
+            query['constant_score']['filter']['and'].append({
+                'term': {'fc_type': fc_type},
+            })
         return self.conn.search(index=self.index, doc_type=self.type,
                                 _source=self._source(feature_names),
-                                body={
-                                    'query': {
-                                        'constant_score': {
-                                            'filter': {
-                                                'prefix': {
-                                                    '_id': prefix,
-                                                },
-                                            },
-                                        },
-                                    },
-                                })
+                                body={'query': query})
 
     def _source(self, feature_names):
         if feature_names is None:
