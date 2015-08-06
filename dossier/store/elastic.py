@@ -173,9 +173,9 @@ class ElasticStore(object):
         ids = set([eid(query_id)])
         for iname in self.indexes:
             fname = iname[4:]
-            terms = query_fc[fname].keys()
-            if len(terms) == 0:
+            if len(query_fc.get(fname, [])) == 0:
                 continue
+            terms = query_fc[fname].keys()
             query = {
                 'constant_score': {
                     'filter': {
