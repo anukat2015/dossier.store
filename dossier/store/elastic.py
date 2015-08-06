@@ -8,6 +8,7 @@ from __future__ import absolute_import, division, print_function
 from collections import OrderedDict, Mapping, defaultdict
 import logging
 
+import cbor
 from dossier.fc import FeatureCollection as FC
 
 from elasticsearch import Elasticsearch, NotFoundError
@@ -17,10 +18,13 @@ logger = logging.getLogger(__name__)
 
 
 class ElasticStore(object):
-    def __init__(self, hosts=None, namespace=None, feature_indexes=None):
+    def __init__(self, hosts=None, namespace=None, feature_indexes=None,
+                 shards=10, replicas=0):
         self.conn = Elasticsearch(hosts=hosts)
         self.index = '%s_fcs' % namespace
         self.type = 'fc'
+        self.shards = shards
+        self.replicas = replicas
         self._normalize_feature_indexes(feature_indexes)
 
         if not self.conn.indices.exists(index=self.index):
@@ -32,9 +36,9 @@ class ElasticStore(object):
     def get(self, content_id, feature_names=None):
         try:
             resp = self.conn.get(index=self.index, doc_type=self.type,
-                                 id=content_id,
+                                 id=eid(content_id),
                                  _source=self._source(feature_names))
-            return FC(resp['_source']['fc'])
+            return fc_from_dict(resp['_source']['fc'])
         except NotFoundError:
             return None
         except:
@@ -43,10 +47,10 @@ class ElasticStore(object):
     def get_many(self, content_id_list, feature_names=None):
         resp = self.conn.mget(index=self.index, doc_type=self.type,
                               _source=self._source(feature_names),
-                              body={'ids': content_id_list})
+                              body={'ids': map(eid, content_id_list)})
         for doc in resp['docs']:
-            fc = FC(doc['_source']['fc']) if doc['found'] else None
-            yield doc['_id'], fc
+            fc = fc_from_dict(doc['_source']['fc']) if doc['found'] else None
+            yield did(doc['_id']), fc
 
     def put(self, items, fc_type='fc'):
         actions = []
@@ -58,41 +62,42 @@ class ElasticStore(object):
             actions.append({
                 '_index': self.index,
                 '_type': self.type,
-                '_id': cid,
+                '_id': eid(cid),
                 '_op_type': 'index',
                 '_source': dict(idxs, **{
                     'fc_type': fc_type,
-                    'fc': fc.to_dict(),
+                    'fc': fc_to_dict(fc),
                 }),
             })
-        bulk(self.conn, actions)
+        bulk(self.conn, actions, timeout=60, request_timeout=60)
 
     def sync(self):
         self.conn.indices.refresh(index=self.index)
 
     def scan(self, *key_ranges, **kwargs):
         for hit in self._scan(*key_ranges, **kwargs)['hits']['hits']:
-            yield FC(hit['_source']['fc'])
+            yield fc_from_dict(hit['_source']['fc'])
 
     def scan_ids(self, *key_ranges, **kwargs):
         kwargs['feature_names'] = False
         resp = self._scan(*key_ranges, **kwargs)
         for hit in resp['hits']['hits']:
-            yield hit['_id']
+            yield did(hit['_id'])
 
     def scan_prefix(self, prefix, feature_names=None, fc_type='fc'):
         resp = self._scan_prefix(prefix, feature_names=feature_names,
                                  fc_type=fc_type)
         for hit in resp['hits']['hits']:
-            yield FC(hit['_source']['fc'])
+            yield fc_from_dict(hit['_source']['fc'])
 
     def scan_prefix_ids(self, prefix, fc_type='fc'):
         resp = self._scan_prefix(prefix, feature_names=False, fc_type=fc_type)
         for hit in resp['hits']['hits']:
-            yield hit['_id']
+            yield did(hit['_id'])
 
     def delete(self, content_id):
-        self.conn.delete(index=self.index, doc_type=self.type, id=content_id)
+        self.conn.delete(index=self.index, doc_type=self.type,
+                         id=eid(content_id))
 
     def delete_all(self):
         if self.conn.indices.exists(index=self.index):
@@ -103,13 +108,13 @@ class ElasticStore(object):
         it = self._canopy_scan(query_id, query_fc,
                                feature_names=feature_names, fc_type=fc_type)
         for hit in it:
-            yield hit['_id'], FC(hit['_source']['fc'])
+            yield did(hit['_id']), fc_from_dict(hit['_source']['fc'])
 
     def canopy_scan_ids(self, query_id, query_fc=None, fc_type=None):
         it = self._canopy_scan(query_id, query_fc, feature_names=False,
                                fc_type=fc_type)
         for hit in it:
-            yield hit['_id']
+            yield did(hit['_id'])
 
     def index_scan(self, idx_name, val, fc_type=None):
         query = {
@@ -130,7 +135,7 @@ class ElasticStore(object):
             'query': query,
         })
         for hit in hits:
-            yield hit['_id']
+            yield did(hit['_id'])
 
     def _canopy_scan(self, query_id, query_fc,
                      feature_names=None, fc_type=None):
@@ -164,10 +169,12 @@ class ElasticStore(object):
             query_fc = self.get(query_id)
         if query_fc is None:
             raise KeyError(query_id)
-        ids = set([query_id])
+        ids = set([eid(query_id)])
         for iname in self.indexes:
             fname = iname[4:]
             terms = query_fc[fname].keys()
+            if len(terms) == 0:
+                continue
             query = {
                 'constant_score': {
                     'filter': {
@@ -187,12 +194,14 @@ class ElasticStore(object):
             }
             self._add_fc_type_to_and(
                 query['constant_score']['filter']['and'], fc_type)
+
+            logger.info('canopy scanning index: %s', fname)
             hits = scan(self.conn, query={
                 '_source': self._source(feature_names),
                 'query': query,
             })
             for hit in hits:
-                ids.add(hit['_id'])
+                ids.add(eid(hit['_id']))
                 yield hit
 
     def _scan(self, *key_ranges, **kwargs):
@@ -218,7 +227,7 @@ class ElasticStore(object):
                 'filter': {
                     'and': [{
                         'prefix': {
-                            '_id': prefix,
+                            '_id': eid(prefix),
                         },
                     }],
                 },
@@ -244,12 +253,13 @@ class ElasticStore(object):
     def _range_filters(self, *key_ranges):
         filters = []
         for s, e in key_ranges:
-            # Make the range inclusive.
+            if isinstance(s, basestring):
+                s = eid(s)
             if isinstance(e, basestring):
+                # Make the range inclusive.
                 # We need a valid codepoint, so use the max.
                 e += u'\U0010FFFF'
-            elif isinstance(e, int):
-                e += 1
+                e = eid(e)
 
             if s == () and e == ():
                 filters.append({'match_all': {}})
@@ -265,16 +275,21 @@ class ElasticStore(object):
             return filters
 
     def _create(self):
-        self.conn.indices.create(index=self.index)
+        self.conn.indices.create(index=self.index, body={
+            'settings': {
+                'number_of_shards': self.shards,
+                'number_of_replicas': self.replicas,
+            },
+        })
         self.conn.indices.put_mapping(
             index=self.index, doc_type=self.type, body={
-                'dynamic_templates': [{
-                    'default_no_analyze': {
-                        'match': '*',
-                        'mapping': {'index': 'no'},
-                    },
-                }],
                 'fc': {
+                    'dynamic_templates': [{
+                        'default_no_analyze': {
+                            'match': '*',
+                            'mapping': {'index': 'no'},
+                        },
+                    }],
                     '_id': {
                         'index': 'not_analyzed',  # allows range queries
                     },
@@ -325,3 +340,55 @@ class ElasticStore(object):
     def _add_fc_type_to_and(self, and_filter, fc_type):
         if fc_type is not None:
             and_filter.append({'term': {'fc_type': fc_type}})
+
+
+def fc_to_dict(fc):
+    d = {}
+    for name, feat in fc.to_dict().iteritems():
+        if isinstance(feat, cbor.Tag):
+            # v = base64.b64encode(feat.value)
+            d[name] = {'cbor_tag': feat.tag, 'cbor_value': feat.value}
+        else:
+            d[name] = feat
+    return d
+
+
+fcs_decoded = 0
+
+
+def fc_from_dict(fc_dict):
+    global fcs_decoded
+    fcs_decoded += 1
+    d = {}
+    for name, feat in fc_dict.iteritems():
+        if isinstance(feat, Mapping) \
+                and len(feat) == 2 \
+                and 'cbor_tag' in feat \
+                and 'cbor_value' in feat:
+            # v = base64.b64decode(feat['cbor_value'])
+            d[name] = cbor.Tag(feat['cbor_tag'], feat['cbor_value'])
+        else:
+            d[name] = feat
+    print('DECODED %d FCS (current #: %d)' % (fcs_decoded, len(fc_dict)))
+    return FC(d)
+
+
+def eid(s):
+    '''Encode id (bytes) as a Unicode string.
+
+    The encoding is done such that lexicographic order is
+    preserved. No concern is given to wasting space.
+
+    The inverse of ``eid`` is ``did``.
+    '''
+    if isinstance(s, unicode):
+        s = s.encode('utf-8')
+    return u''.join('{:02x}'.format(ord(b)) for b in s)
+
+
+def did(s):
+    '''Decode id (Unicode string) as a bytes.
+
+    The inverse of ``did`` is ``eid``.
+    '''
+    return ''.join(chr(int(s[i:i+2], base=16)) for i in xrange(0, len(s), 2))

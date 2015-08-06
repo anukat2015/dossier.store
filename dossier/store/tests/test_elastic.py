@@ -12,8 +12,6 @@ import pytest
 from dossier.fc import FeatureCollection as FC
 from dossier.store.elastic import ElasticStore
 
-from dossier.store.tests import kvl  # noqa
-
 
 logger = logging.getLogger(__name__)
 
@@ -273,3 +271,8 @@ def test_index_scan(store, fcs):
     put_fcs(store, fcs)
     assert frozenset(store.index_scan('boNAME', 'the')) \
         == frozenset(['boss', 'big-man'])
+
+
+def test_byte_keys(store):
+    fc = FC({'NAME': {'Foo Bar': 1}})
+    store.put([('\x00\xff\xf4', fc)])
