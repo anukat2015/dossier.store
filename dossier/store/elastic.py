@@ -343,7 +343,14 @@ class ElasticStore(object):
             and_filter.append({'term': {'fc_type': fc_type}})
 
 
+fcs_encoded = 0
+fcs_decoded = 0
+
+
 def fc_to_dict(fc):
+    global fcs_encoded
+    fcs_encoded += 1
+
     d = {}
     for name, feat in fc.to_dict().iteritems():
         d[name] = base64.b64encode(cbor.dumps(feat))
@@ -351,6 +358,9 @@ def fc_to_dict(fc):
 
 
 def fc_from_dict(fc_dict):
+    global fcs_decoded
+    fcs_decoded += 1
+
     d = {}
     for name, feat in fc_dict.iteritems():
         d[name] = cbor.loads(base64.b64decode(feat))
