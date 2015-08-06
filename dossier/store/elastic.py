@@ -5,6 +5,7 @@
 '''
 from __future__ import absolute_import, division, print_function
 
+import base64
 from collections import OrderedDict, Mapping, defaultdict
 import logging
 
@@ -285,8 +286,8 @@ class ElasticStore(object):
             index=self.index, doc_type=self.type, body={
                 'fc': {
                     'dynamic_templates': [{
-                        'default_no_analyze': {
-                            'match': '*',
+                        'default_no_analyze_fc': {
+                            'match': 'fc.*',
                             'mapping': {'index': 'no'},
                         },
                     }],
@@ -345,31 +346,14 @@ class ElasticStore(object):
 def fc_to_dict(fc):
     d = {}
     for name, feat in fc.to_dict().iteritems():
-        if isinstance(feat, cbor.Tag):
-            # v = base64.b64encode(feat.value)
-            d[name] = {'cbor_tag': feat.tag, 'cbor_value': feat.value}
-        else:
-            d[name] = feat
+        d[name] = base64.b64encode(cbor.dumps(feat))
     return d
 
 
-fcs_decoded = 0
-
-
 def fc_from_dict(fc_dict):
-    global fcs_decoded
-    fcs_decoded += 1
     d = {}
     for name, feat in fc_dict.iteritems():
-        if isinstance(feat, Mapping) \
-                and len(feat) == 2 \
-                and 'cbor_tag' in feat \
-                and 'cbor_value' in feat:
-            # v = base64.b64decode(feat['cbor_value'])
-            d[name] = cbor.Tag(feat['cbor_tag'], feat['cbor_value'])
-        else:
-            d[name] = feat
-    print('DECODED %d FCS (current #: %d)' % (fcs_decoded, len(fc_dict)))
+        d[name] = cbor.loads(base64.b64decode(feat))
     return FC(d)
 
 

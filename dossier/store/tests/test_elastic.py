@@ -63,11 +63,13 @@ def create_test_store():
     # Give each instantiation its own namespace so that tests don't
     # share mutable global state.
     namespace = str(uuid.uuid4())
-    return ElasticStore(namespace=namespace, feature_indexes=[{
-        'NAME': {'es_index_type': 'string', 'feature_names': ['NAME']},
-    }, {
-        'boNAME': {'es_index_type': 'string', 'feature_names': ['boNAME']},
-    }])
+    return ElasticStore(
+        hosts='172.17.42.1', namespace=namespace,
+        feature_indexes=[{
+            'NAME': {'es_index_type': 'string', 'feature_names': ['NAME']},
+        }, {
+            'boNAME': {'es_index_type': 'string', 'feature_names': ['boNAME']},
+        }])
 
 
 def put_fcs(store, fcs):
