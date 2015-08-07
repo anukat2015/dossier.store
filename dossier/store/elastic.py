@@ -84,24 +84,23 @@ class ElasticStore(object):
         self.conn.indices.refresh(index=self.index)
 
     def scan(self, *key_ranges, **kwargs):
-        for hit in self._scan(*key_ranges, **kwargs)['hits']['hits']:
+        for hit in self._scan(*key_ranges, **kwargs):
             yield fc_from_dict(hit['_source']['fc'])
 
     def scan_ids(self, *key_ranges, **kwargs):
         kwargs['feature_names'] = False
-        resp = self._scan(*key_ranges, **kwargs)
-        for hit in resp['hits']['hits']:
+        for hit in self._scan(*key_ranges, **kwargs):
             yield did(hit['_id'])
 
     def scan_prefix(self, prefix, feature_names=None, fc_type='fc'):
         resp = self._scan_prefix(prefix, feature_names=feature_names,
                                  fc_type=fc_type)
-        for hit in resp['hits']['hits']:
+        for hit in resp:
             yield fc_from_dict(hit['_source']['fc'])
 
     def scan_prefix_ids(self, prefix, fc_type='fc'):
         resp = self._scan_prefix(prefix, feature_names=False, fc_type=fc_type)
-        for hit in resp['hits']['hits']:
+        for hit in resp:
             yield did(hit['_id'])
 
     def delete(self, content_id):
@@ -142,7 +141,7 @@ class ElasticStore(object):
         }
         self._add_fc_type_to_and(
             query['constant_score']['filter']['and'], fc_type)
-        hits = scan(self.conn, query={
+        hits = scan(self.conn, index=self.index, doc_type=self.type, query={
             '_source': False,
             'query': query,
         })
@@ -208,10 +207,12 @@ class ElasticStore(object):
                 query['constant_score']['filter']['and'], fc_type)
 
             logger.info('canopy scanning index: %s', fname)
-            hits = scan(self.conn, query={
-                '_source': self._source(feature_names),
-                'query': query,
-            })
+            hits = scan(
+                self.conn, index=self.index, doc_type=self.type,
+                query={
+                    '_source': self._source(feature_names),
+                    'query': query,
+                })
             for hit in hits:
                 ids.add(eid(hit['_id']))
                 yield hit
@@ -220,18 +221,19 @@ class ElasticStore(object):
         feature_names = kwargs.get('feature_names')
         range_filters = self._range_filters(*key_ranges)
         self._add_fc_type_to_and(range_filters, kwargs.get('fc_type'))
-        return self.conn.search(index=self.index, doc_type=self.type,
-                                _source=self._source(feature_names),
-                                body={
-                                    'sort': {'_id': {'order': 'asc'}},
-                                    'query': {
-                                        'constant_score': {
-                                            'filter': {
-                                                'and': range_filters,
-                                            },
-                                        },
-                                    },
-                                })
+        return scan(self.conn, index=self.index, doc_type=self.type,
+                    _source=self._source(feature_names),
+                    preserve_order=True,
+                    query={
+                        'sort': {'_id': {'order': 'asc'}},
+                        'query': {
+                            'constant_score': {
+                                'filter': {
+                                    'and': range_filters,
+                                },
+                            },
+                        },
+                    })
 
     def _scan_prefix(self, prefix, feature_names=None, fc_type=None):
         query = {
@@ -247,12 +249,13 @@ class ElasticStore(object):
         }
         self._add_fc_type_to_and(
             query['constant_score']['filter']['and'], fc_type)
-        return self.conn.search(index=self.index, doc_type=self.type,
-                                _source=self._source(feature_names),
-                                body={
-                                    'sort': {'_id': {'order': 'asc'}},
-                                    'query': query,
-                                })
+        return scan(self.conn, index=self.index, doc_type=self.type,
+                    _source=self._source(feature_names),
+                    preserve_order=True,
+                    query={
+                        'sort': {'_id': {'order': 'asc'}},
+                        'query': query,
+                    })
 
     def _source(self, feature_names):
         if feature_names is None:

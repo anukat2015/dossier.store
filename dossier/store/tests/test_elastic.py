@@ -282,3 +282,15 @@ def test_byte_keys(store):
 
 def test_delete_non_existing_fc(store):
     store.delete('DNE')
+
+
+def test_scan_ids(store):
+    store.put([
+        ('a', FC()), ('b', FC()), ('c', FC()), ('d', FC()), ('e', FC()),
+        ('f', FC()), ('g', FC()), ('h', FC()), ('i', FC()), ('j', FC()),
+        ('k', FC()), ('l', FC()), ('m', FC()), ('n', FC()), ('o', FC()),
+    ])
+    store.sync()
+    expected = 'abcdefghijklmno'
+    got = ''.join(sorted(store.scan_ids()))
+    assert expected == got
