@@ -11,6 +11,7 @@ import logging
 
 import cbor
 from dossier.fc import FeatureCollection as FC
+import yakonfig
 
 from elasticsearch import Elasticsearch, NotFoundError
 from elasticsearch.helpers import bulk, scan
@@ -19,6 +20,12 @@ logger = logging.getLogger(__name__)
 
 
 class ElasticStore(object):
+    config_name = 'dossier.store'
+
+    @staticmethod
+    def configured():
+        return ElasticStore(**yakonfig.get_global_config('dossier.store'))
+
     def __init__(self, hosts=None, namespace=None, feature_indexes=None,
                  shards=10, replicas=0):
         self.conn = Elasticsearch(hosts=hosts)
