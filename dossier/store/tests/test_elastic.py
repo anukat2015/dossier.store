@@ -278,3 +278,7 @@ def test_index_scan(store, fcs):
 def test_byte_keys(store):
     fc = FC({'NAME': {'Foo Bar': 1}})
     store.put([('\x00\xff\xf4', fc)])
+
+
+def test_delete_non_existing_fc(store):
+    store.delete('DNE')

@@ -98,8 +98,11 @@ class ElasticStore(object):
             yield did(hit['_id'])
 
     def delete(self, content_id):
-        self.conn.delete(index=self.index, doc_type=self.type,
-                         id=eid(content_id))
+        try:
+            self.conn.delete(index=self.index, doc_type=self.type,
+                             id=eid(content_id))
+        except NotFoundError:
+            pass
 
     def delete_all(self):
         if self.conn.indices.exists(index=self.index):
