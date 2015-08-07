@@ -59,7 +59,8 @@ class ElasticStore(object):
             idxs = defaultdict(list)
             for idx_name, config in self.indexes.iteritems():
                 for fname in config['feature_names']:
-                    idxs[idx_name].extend(fc[fname])
+                    if fname in fc:
+                        idxs[idx_name].extend(fc[fname])
             actions.append({
                 '_index': self.index,
                 '_type': self.type,
