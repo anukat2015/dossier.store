@@ -475,11 +475,17 @@ class Store(object):
         icreate, itrans = idx['create'], idx['transform']
         if isinstance(idx_name, unicode):
             idx_name = idx_name.encode('utf-8')
+
         for cid_fc in ids_and_fcs:
             content_id = cid_fc[0]
+
+            # Be sure to dedup index_values or else we may
+            # suffer duplicate_pkey errors down the line.
+            seen_values = set()
             for index_value in icreate(itrans, cid_fc):
-                if index_value:
+                if index_value and index_value not in seen_values:
                     yield (index_value, idx_name, content_id)
+                    seen_values.add(index_value)
 
     def _index(self, name):
         '''Returns index transforms for ``name``.
