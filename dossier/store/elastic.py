@@ -8,6 +8,7 @@ from __future__ import absolute_import, division, print_function
 import base64
 from collections import OrderedDict, Mapping, defaultdict
 import logging
+import uuid
 
 import cbor
 from dossier.fc import FeatureCollection as FC
@@ -28,13 +29,20 @@ class ElasticStore(object):
 
     def __init__(self, hosts=None, namespace=None, feature_indexes=None,
                  shards=10, replicas=0):
+        if hosts is None:
+            raise yakonfig.ProgrammerError(
+                'ElasticStore needs at least one host specified.')
+        if namespace is None:
+            namespace = unicode(uuid.uuid4())
         self.conn = Elasticsearch(hosts=hosts)
         self.index = '%s_fcs' % namespace
         self.type = 'fc'
         self.shards = shards
         self.replicas = replicas
-        self._normalize_feature_indexes(feature_indexes)
+        self.indexes = OrderedDict()
+        self.indexed_features = set()
 
+        self._normalize_feature_indexes(feature_indexes)
         if not self.conn.indices.exists(index=self.index):
             # This can race, but that should be OK.
             # Worst case, we initialize with the same settings more than
@@ -63,11 +71,12 @@ class ElasticStore(object):
     def put(self, items, fc_type='fc'):
         actions = []
         for cid, fc in items:
+            # TODO: If we store features in a columnar order, then we
+            # could tell ES to index the feature values directly. ---AG
             idxs = defaultdict(list)
-            for idx_name, config in self.indexes.iteritems():
-                for fname in config['feature_names']:
-                    if fname in fc:
-                        idxs[idx_name].extend(fc[fname])
+            for fname in self.indexed_features:
+                if fname in fc:
+                    idxs[fname_to_idx_name(fname)].extend(fc[fname])
             actions.append({
                 '_index': self.index,
                 '_type': self.type,
@@ -127,20 +136,21 @@ class ElasticStore(object):
         for hit in it:
             yield did(hit['_id'])
 
-    def index_scan(self, idx_name, val, fc_type=None):
+    def index_scan(self, fname, val, fc_type=None):
+        idx_name = fname_to_idx_name(fname)
+        disj = []
+        for fname in self.indexes[idx_name]['feature_names']:
+            disj.append({'term': {fname_to_idx_name(fname): val}})
         query = {
             'constant_score': {
                 'filter': {
-                    'and': [{
-                        'term': {
-                            'idx_' + idx_name: val,
-                        },
-                    }],
+                    'and': [
+                        self._fc_type_filter(fc_type),
+                        {'or': disj},
+                    ],
                 },
             },
         }
-        self._add_fc_type_to_and(
-            query['constant_score']['filter']['and'], fc_type)
         hits = scan(self.conn, index=self.index, doc_type=self.type, query={
             '_source': False,
             'query': query,
@@ -182,31 +192,26 @@ class ElasticStore(object):
             raise KeyError(query_id)
         ids = set([eid(query_id)])
         for iname in self.indexes:
-            fname = iname[4:]
-            if len(query_fc.get(fname, [])) == 0:
+            term_disj = self._fc_index_disjunction_from_query(query_fc, iname)
+            if len(term_disj) == 0:
                 continue
-            terms = query_fc[fname].keys()
             query = {
                 'constant_score': {
                     'filter': {
-                        'and': [{
+                        'and': [self._fc_type_filter(fc_type), {
                             'not': {
                                 'ids': {
                                     'values': list(ids),
                                 },
                             },
                         }, {
-                            'terms': {
-                                iname: terms,
-                            },
+                            'or': term_disj,
                         }],
                     },
                 },
             }
-            self._add_fc_type_to_and(
-                query['constant_score']['filter']['and'], fc_type)
 
-            logger.info('canopy scanning index: %s', fname)
+            logger.info('canopy scanning index: %s', iname)
             hits = scan(
                 self.conn, index=self.index, doc_type=self.type,
                 query={
@@ -220,7 +225,7 @@ class ElasticStore(object):
     def _scan(self, *key_ranges, **kwargs):
         feature_names = kwargs.get('feature_names')
         range_filters = self._range_filters(*key_ranges)
-        self._add_fc_type_to_and(range_filters, kwargs.get('fc_type'))
+        range_filters.append(self._fc_type_filter(kwargs.get('fc_type')))
         return scan(self.conn, index=self.index, doc_type=self.type,
                     _source=self._source(feature_names),
                     preserve_order=True,
@@ -239,7 +244,7 @@ class ElasticStore(object):
         query = {
             'constant_score': {
                 'filter': {
-                    'and': [{
+                    'and': [self._fc_type_filter(fc_type), {
                         'prefix': {
                             '_id': eid(prefix),
                         },
@@ -247,8 +252,6 @@ class ElasticStore(object):
                 },
             },
         }
-        self._add_fc_type_to_and(
-            query['constant_score']['filter']['and'], fc_type)
         return scan(self.conn, index=self.index, doc_type=self.type,
                     _source=self._source(feature_names),
                     preserve_order=True,
@@ -331,7 +334,6 @@ class ElasticStore(object):
         return maps
 
     def _normalize_feature_indexes(self, feature_indexes):
-        self.indexes = OrderedDict()
         for x in feature_indexes or []:
             if isinstance(x, Mapping):
                 assert len(x) == 1, 'only one mapping per index entry allowed'
@@ -346,15 +348,37 @@ class ElasticStore(object):
                 name = x
                 features = [x]
                 index_type = 'integer'
-            name = 'idx_%s' % name
-            self.indexes[name.decode('utf-8')] = {
+            self.indexes[fname_to_idx_name(name)] = {
                 'feature_names': features,
                 'es_index_type': index_type,
             }
+            for fname in features:
+                self.indexed_features.add(fname)
 
-    def _add_fc_type_to_and(self, and_filter, fc_type):
+    def _fc_index_disjunction_from_query(self, query_fc, idx_name):
+        fname = idx_name_to_fname(idx_name)
+        if len(query_fc.get(fname, [])) == 0:
+            return []
+        terms = query_fc[fname].keys()
+
+        disj = []
+        for fname in self.indexes[idx_name]['feature_names']:
+            disj.append({'terms': {fname_to_idx_name(fname): terms}})
+        return disj
+
+    def _fc_type_filter(self, fc_type):
         if fc_type is not None:
-            and_filter.append({'term': {'fc_type': fc_type}})
+            return {'term': {'fc_type': fc_type}}
+        else:
+            return {'match_all': {}}
+
+
+class Indexes(object):
+    '''Manage indexing for FCs in ElasticSearch.
+
+    It would be a glorious day where we could
+    '''
+    pass
 
 
 fcs_encoded = 0
@@ -400,3 +424,11 @@ def did(s):
     The inverse of ``did`` is ``eid``.
     '''
     return ''.join(chr(int(s[i:i+2], base=16)) for i in xrange(0, len(s), 2))
+
+
+def idx_name_to_fname(idx_name):
+    return idx_name[4:]
+
+
+def fname_to_idx_name(fname):
+    return u'idx_%s' % fname.decode('utf-8')

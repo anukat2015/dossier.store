@@ -5,7 +5,6 @@
 '''
 from __future__ import absolute_import, division, print_function
 import logging
-import uuid
 
 import pytest
 
@@ -60,11 +59,8 @@ def fcs():
 
 
 def create_test_store():
-    # Give each instantiation its own namespace so that tests don't
-    # share mutable global state.
-    namespace = str(uuid.uuid4())
     return ElasticStore(
-        hosts='172.17.42.1', namespace=namespace,
+        hosts='172.17.42.1',
         feature_indexes=[{
             'NAME': {'es_index_type': 'string', 'feature_names': ['NAME']},
         }, {
@@ -294,3 +290,38 @@ def test_scan_ids(store):
     expected = 'abcdefghijklmno'
     got = ''.join(sorted(store.scan_ids()))
     assert expected == got
+
+
+def test_index_mapping_canopy(fcs):
+    store = ElasticStore(
+        hosts='172.17.42.1',
+        feature_indexes=[{
+            'NAME': {
+                'es_index_type': 'string',
+                'feature_names': ['NAME', 'boNAME'],
+            },
+        }])
+    store.put(fcs)
+    store.sync()
+
+    query = FC({'NAME': {'The Boss': 1, 'clarence': 1}})
+    assert frozenset(store.canopy_scan_ids('ephemeral', query)) \
+        == frozenset(['boss', 'big-man'])
+
+
+def test_index_mapping_raw_scan(fcs):
+    store = ElasticStore(
+        hosts='172.17.42.1',
+        feature_indexes=[{
+            'NAME': {
+                'es_index_type': 'string',
+                'feature_names': ['NAME', 'boNAME'],
+            },
+        }])
+    store.put(fcs)
+    store.sync()
+
+    assert frozenset(store.index_scan('NAME', 'The Boss')) \
+        == frozenset(['boss'])
+    assert frozenset(store.index_scan('NAME', 'clarence')) \
+        == frozenset(['big-man'])
