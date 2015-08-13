@@ -117,7 +117,7 @@ def test_get_many(store, fcs):
 
 def test_scan_all(store, fcs):
     put_fcs(store, fcs)
-    assert_set_eq(store.scan(), map(lambda (_, x): x, fcs))
+    assert_set_eq(store.scan(), fcs)
 
     assert list(store.scan_ids()) \
         == list(['big-man', 'boss', 'patti'])
@@ -126,13 +126,15 @@ def test_scan_all(store, fcs):
 def test_scan_some(store, fcs):
     put_fcs(store, fcs)
     assert_set_eq(store.scan(('b', 'b')),
-                  [fcget(fcs, 'boss'), fcget(fcs, 'big-man')])
+                  [('boss', fcget(fcs, 'boss')),
+                   ('big-man', fcget(fcs, 'big-man'))])
 
 
 def test_scan_prefix(store, fcs):
     put_fcs(store, fcs)
     assert_set_eq(store.scan_prefix('b'),
-                  [fcget(fcs, 'boss'), fcget(fcs, 'big-man')])
+                  [('boss', fcget(fcs, 'boss')),
+                   ('big-man', fcget(fcs, 'big-man'))])
 
     assert frozenset(store.scan_prefix_ids('b')) \
         == frozenset(['boss', 'big-man'])

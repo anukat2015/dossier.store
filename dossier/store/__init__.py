@@ -88,7 +88,7 @@ poor man's case insensitive search:
 .. autoclass:: Store
 .. autofunction:: feature_index
 '''
-from dossier.store.elastic import ElasticStore
+from dossier.store.elastic import ElasticStore, ElasticStoreSync
 from dossier.store.store import Store, feature_index
 
-__all__ = ['ElasticStore', 'Store', 'feature_index']
+__all__ = ['ElasticStore', 'ElasticStoreSync', 'Store', 'feature_index']

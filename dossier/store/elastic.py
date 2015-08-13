@@ -23,9 +23,9 @@ logger = logging.getLogger(__name__)
 class ElasticStore(object):
     config_name = 'dossier.store'
 
-    @staticmethod
-    def configured():
-        return ElasticStore(**yakonfig.get_global_config('dossier.store'))
+    @classmethod
+    def configured(cls):
+        return cls(**yakonfig.get_global_config('dossier.store'))
 
     def __init__(self, hosts=None, namespace=None, feature_indexes=None,
                  shards=10, replicas=0):
@@ -94,7 +94,7 @@ class ElasticStore(object):
 
     def scan(self, *key_ranges, **kwargs):
         for hit in self._scan(*key_ranges, **kwargs):
-            yield fc_from_dict(hit['_source']['fc'])
+            yield did(hit['_id']), fc_from_dict(hit['_source']['fc'])
 
     def scan_ids(self, *key_ranges, **kwargs):
         kwargs['feature_names'] = False
@@ -105,7 +105,7 @@ class ElasticStore(object):
         resp = self._scan_prefix(prefix, feature_names=feature_names,
                                  fc_type=fc_type)
         for hit in resp:
-            yield fc_from_dict(hit['_source']['fc'])
+            yield did(hit['_id']), fc_from_dict(hit['_source']['fc'])
 
     def scan_prefix_ids(self, prefix, fc_type='fc'):
         resp = self._scan_prefix(prefix, feature_names=False, fc_type=fc_type)
@@ -124,19 +124,19 @@ class ElasticStore(object):
             self.conn.indices.delete(index=self.index)
 
     def canopy_scan(self, query_id, query_fc=None,
-                    feature_names=None, fc_type=None):
+                    feature_names=None, fc_type='fc'):
         it = self._canopy_scan(query_id, query_fc,
                                feature_names=feature_names, fc_type=fc_type)
         for hit in it:
             yield did(hit['_id']), fc_from_dict(hit['_source']['fc'])
 
-    def canopy_scan_ids(self, query_id, query_fc=None, fc_type=None):
+    def canopy_scan_ids(self, query_id, query_fc=None, fc_type='fc'):
         it = self._canopy_scan(query_id, query_fc, feature_names=False,
                                fc_type=fc_type)
         for hit in it:
             yield did(hit['_id'])
 
-    def index_scan(self, fname, val, fc_type=None):
+    def index_scan(self, fname, val, fc_type='fc'):
         idx_name = fname_to_idx_name(fname)
         disj = []
         for fname in self.indexes[idx_name]['feature_names']:
@@ -293,14 +293,17 @@ class ElasticStore(object):
             return filters
 
     def _create(self):
-        self.conn.indices.create(index=self.index, body={
-            'settings': {
-                'number_of_shards': self.shards,
-                'number_of_replicas': self.replicas,
-            },
-        })
+        self.conn.indices.create(
+            index=self.index, timeout=60, request_timeout=60, body={
+                'settings': {
+                    'number_of_shards': self.shards,
+                    'number_of_replicas': self.replicas,
+                },
+            })
         self.conn.indices.put_mapping(
-            index=self.index, doc_type=self.type, body={
+            index=self.index, doc_type=self.type,
+            timeout=60, request_timeout=60,
+            body={
                 'fc': {
                     'dynamic_templates': [{
                         'default_no_analyze_fc': {
@@ -373,12 +376,14 @@ class ElasticStore(object):
             return {'match_all': {}}
 
 
-class Indexes(object):
-    '''Manage indexing for FCs in ElasticSearch.
+class ElasticStoreSync(ElasticStore):
+    def put(self, *args, **kwargs):
+        super(ElasticStoreSync, self).put(*args, **kwargs)
+        self.sync()
 
-    It would be a glorious day where we could
-    '''
-    pass
+    def delete(self, *args, **kwargs):
+        super(ElasticStoreSync, self).delete(*args, **kwargs)
+        self.sync()
 
 
 fcs_encoded = 0
