@@ -14,7 +14,7 @@ import cbor
 from dossier.fc import FeatureCollection as FC
 import yakonfig
 
-from elasticsearch import Elasticsearch, NotFoundError
+from elasticsearch import Elasticsearch, NotFoundError, TransportError
 from elasticsearch.helpers import bulk, scan
 
 logger = logging.getLogger(__name__)
@@ -27,8 +27,8 @@ class ElasticStore(object):
     def configured(cls):
         return cls(**yakonfig.get_global_config('dossier.store'))
 
-    def __init__(self, hosts=None, namespace=None, feature_indexes=None,
-                 shards=10, replicas=0):
+    def __init__(self, hosts=None, namespace=None, type='fc',
+                 feature_indexes=None, shards=10, replicas=0):
         if hosts is None:
             raise yakonfig.ProgrammerError(
                 'ElasticStore needs at least one host specified.')
@@ -36,7 +36,7 @@ class ElasticStore(object):
             namespace = unicode(uuid.uuid4())
         self.conn = Elasticsearch(hosts=hosts)
         self.index = '%s_fcs' % namespace
-        self.type = 'fc'
+        self.type = type
         self.shards = shards
         self.replicas = replicas
         self.indexes = OrderedDict()
@@ -61,29 +61,32 @@ class ElasticStore(object):
             raise
 
     def get_many(self, content_id_list, feature_names=None):
-        resp = self.conn.mget(index=self.index, doc_type=self.type,
-                              _source=self._source(feature_names),
-                              body={'ids': map(eid, content_id_list)})
+        try:
+            resp = self.conn.mget(index=self.index, doc_type=self.type,
+                                  _source=self._source(feature_names),
+                                  body={'ids': map(eid, content_id_list)})
+        except TransportError:
+            return
         for doc in resp['docs']:
             fc = fc_from_dict(doc['_source']['fc']) if doc['found'] else None
             yield did(doc['_id']), fc
 
-    def put(self, items, fc_type='fc'):
+    def put(self, items, indexes=True):
         actions = []
         for cid, fc in items:
             # TODO: If we store features in a columnar order, then we
             # could tell ES to index the feature values directly. ---AG
             idxs = defaultdict(list)
-            for fname in self.indexed_features:
-                if fname in fc:
-                    idxs[fname_to_idx_name(fname)].extend(fc[fname])
+            if indexes:
+                for fname in self.indexed_features:
+                    if fname in fc:
+                        idxs[fname_to_idx_name(fname)].extend(fc[fname])
             actions.append({
                 '_index': self.index,
                 '_type': self.type,
                 '_id': eid(cid),
                 '_op_type': 'index',
                 '_source': dict(idxs, **{
-                    'fc_type': fc_type,
                     'fc': fc_to_dict(fc),
                 }),
             })
@@ -101,14 +104,13 @@ class ElasticStore(object):
         for hit in self._scan(*key_ranges, **kwargs):
             yield did(hit['_id'])
 
-    def scan_prefix(self, prefix, feature_names=None, fc_type='fc'):
-        resp = self._scan_prefix(prefix, feature_names=feature_names,
-                                 fc_type=fc_type)
+    def scan_prefix(self, prefix, feature_names=None):
+        resp = self._scan_prefix(prefix, feature_names=feature_names)
         for hit in resp:
             yield did(hit['_id']), fc_from_dict(hit['_source']['fc'])
 
-    def scan_prefix_ids(self, prefix, fc_type='fc'):
-        resp = self._scan_prefix(prefix, feature_names=False, fc_type=fc_type)
+    def scan_prefix_ids(self, prefix):
+        resp = self._scan_prefix(prefix, feature_names=False)
         for hit in resp:
             yield did(hit['_id'])
 
@@ -121,34 +123,34 @@ class ElasticStore(object):
 
     def delete_all(self):
         if self.conn.indices.exists(index=self.index):
+            self.conn.delete_by_query(
+                index=self.index, doc_type=self.type, body={
+                    'query': {'match_all': {}},
+                })
+
+    def delete_index(self):
+        if self.conn.indices.exists(index=self.index):
             self.conn.indices.delete(index=self.index)
 
-    def canopy_scan(self, query_id, query_fc=None,
-                    feature_names=None, fc_type='fc'):
+    def canopy_scan(self, query_id, query_fc=None, feature_names=None):
         it = self._canopy_scan(query_id, query_fc,
-                               feature_names=feature_names, fc_type=fc_type)
+                               feature_names=feature_names)
         for hit in it:
             yield did(hit['_id']), fc_from_dict(hit['_source']['fc'])
 
-    def canopy_scan_ids(self, query_id, query_fc=None, fc_type='fc'):
-        it = self._canopy_scan(query_id, query_fc, feature_names=False,
-                               fc_type=fc_type)
+    def canopy_scan_ids(self, query_id, query_fc=None):
+        it = self._canopy_scan(query_id, query_fc, feature_names=False)
         for hit in it:
             yield did(hit['_id'])
 
-    def index_scan(self, fname, val, fc_type='fc'):
+    def index_scan(self, fname, val):
         idx_name = fname_to_idx_name(fname)
         disj = []
         for fname in self.indexes[idx_name]['feature_names']:
             disj.append({'term': {fname_to_idx_name(fname): val}})
         query = {
             'constant_score': {
-                'filter': {
-                    'and': [
-                        self._fc_type_filter(fc_type),
-                        {'or': disj},
-                    ],
-                },
+                'filter': {'or': disj},
             },
         }
         hits = scan(self.conn, index=self.index, doc_type=self.type, query={
@@ -158,8 +160,7 @@ class ElasticStore(object):
         for hit in hits:
             yield did(hit['_id'])
 
-    def _canopy_scan(self, query_id, query_fc,
-                     feature_names=None, fc_type=None):
+    def _canopy_scan(self, query_id, query_fc, feature_names=None):
         # Why are we running multiple scans? Why are we deduplicating?
         #
         # It turns out that, in our various systems, it can be important to
@@ -184,13 +185,16 @@ class ElasticStore(object):
         # To fix (2), we keep track of all ids we've seen and include them
         # as a filter in subsequent queries.
         if query_fc is None:
+            if query_id is None:
+                raise ValueError(
+                    'one of query_id or query_fc must not be None')
             # I think we can actually tell ES to pull the fields directly
             # from the query server-side, but that's a premature optimization
             # at this point. ---AG
             query_fc = self.get(query_id)
         if query_fc is None:
             raise KeyError(query_id)
-        ids = set([eid(query_id)])
+        ids = set([] if query_id is None else [eid(query_id)])
         for iname in self.indexes:
             term_disj = self._fc_index_disjunction_from_query(query_fc, iname)
             if len(term_disj) == 0:
@@ -198,7 +202,7 @@ class ElasticStore(object):
             query = {
                 'constant_score': {
                     'filter': {
-                        'and': [self._fc_type_filter(fc_type), {
+                        'and': [{
                             'not': {
                                 'ids': {
                                     'values': list(ids),
@@ -225,7 +229,6 @@ class ElasticStore(object):
     def _scan(self, *key_ranges, **kwargs):
         feature_names = kwargs.get('feature_names')
         range_filters = self._range_filters(*key_ranges)
-        range_filters.append(self._fc_type_filter(kwargs.get('fc_type')))
         return scan(self.conn, index=self.index, doc_type=self.type,
                     _source=self._source(feature_names),
                     preserve_order=True,
@@ -240,11 +243,11 @@ class ElasticStore(object):
                         },
                     })
 
-    def _scan_prefix(self, prefix, feature_names=None, fc_type=None):
+    def _scan_prefix(self, prefix, feature_names=None):
         query = {
             'constant_score': {
                 'filter': {
-                    'and': [self._fc_type_filter(fc_type), {
+                    'and': [{
                         'prefix': {
                             '_id': eid(prefix),
                         },
@@ -336,6 +339,11 @@ class ElasticStore(object):
             }
         return maps
 
+    def _get_field_types(self):
+        mapping = self.conn.indices.get_mapping(
+            index=self.index, doc_type=self.type)
+        return mapping[self.index]['mappings'][self.type]['properties']
+
     def _normalize_feature_indexes(self, feature_indexes):
         for x in feature_indexes or []:
             if isinstance(x, Mapping):
@@ -368,12 +376,6 @@ class ElasticStore(object):
         for fname in self.indexes[idx_name]['feature_names']:
             disj.append({'terms': {fname_to_idx_name(fname): terms}})
         return disj
-
-    def _fc_type_filter(self, fc_type):
-        if fc_type is not None:
-            return {'term': {'fc_type': fc_type}}
-        else:
-            return {'match_all': {}}
 
 
 class ElasticStoreSync(ElasticStore):

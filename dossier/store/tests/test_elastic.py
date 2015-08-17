@@ -9,7 +9,7 @@ import logging
 import pytest
 
 from dossier.fc import FeatureCollection as FC
-from dossier.store.elastic import ElasticStore
+from dossier.store.elastic import ElasticStoreSync
 
 
 logger = logging.getLogger(__name__)
@@ -59,21 +59,13 @@ def fcs():
 
 
 def create_test_store():
-    return ElasticStore(
+    return ElasticStoreSync(
         hosts='172.17.42.1',
         feature_indexes=[{
             'NAME': {'es_index_type': 'string', 'feature_names': ['NAME']},
         }, {
             'boNAME': {'es_index_type': 'string', 'feature_names': ['boNAME']},
         }])
-
-
-def put_fcs(store, fcs):
-    store.put(fcs)
-    # ES will ACK a put before making it available to a get.
-    # Generally speaking, this isn't a huge problem, but for writing tests
-    # at least, sync'ing is quite convenient.
-    store.sync()
 
 
 def fcget(fcs, name1):
@@ -96,19 +88,18 @@ def assert_set_eq(xs, ys):
 def test_put_get(store, fcs):
     fcboss = fcget(fcs, 'boss')
     store.put([('boss', fcboss)])
-    store.sync()
     assert fcboss == store.get('boss')
 
 
 def test_get_partial(store, fcs):
-    put_fcs(store, fcs)
+    store.put(fcs)
     fc = store.get('boss', feature_names=['NAME'])
     assert 'boNAME' in fcget(fcs, 'boss')
     assert 'boNAME' not in fc
 
 
 def test_get_many(store, fcs):
-    put_fcs(store, fcs)
+    store.put(fcs)
     assert_set_eq(store.get_many(['boss', 'patti']), [
         ('boss', fcget(fcs, 'boss')),
         ('patti', fcget(fcs, 'patti')),
@@ -116,7 +107,7 @@ def test_get_many(store, fcs):
 
 
 def test_scan_all(store, fcs):
-    put_fcs(store, fcs)
+    store.put(fcs)
     assert_set_eq(store.scan(), fcs)
 
     assert list(store.scan_ids()) \
@@ -124,14 +115,14 @@ def test_scan_all(store, fcs):
 
 
 def test_scan_some(store, fcs):
-    put_fcs(store, fcs)
+    store.put(fcs)
     assert_set_eq(store.scan(('b', 'b')),
                   [('boss', fcget(fcs, 'boss')),
                    ('big-man', fcget(fcs, 'big-man'))])
 
 
 def test_scan_prefix(store, fcs):
-    put_fcs(store, fcs)
+    store.put(fcs)
     assert_set_eq(store.scan_prefix('b'),
                   [('boss', fcget(fcs, 'boss')),
                    ('big-man', fcget(fcs, 'big-man'))])
@@ -141,14 +132,13 @@ def test_scan_prefix(store, fcs):
 
 
 def test_delete(store, fcs):
-    put_fcs(store, fcs)
+    store.put(fcs)
     store.delete('boss')
-    store.sync()
     assert len(list(store.scan_ids())) == len(fcs) - 1
 
 
 def test_delete_all(store, fcs):
-    put_fcs(store, fcs)
+    store.put(fcs)
     store.delete_all()
     try:
         store = create_test_store()
@@ -167,24 +157,22 @@ def test_get_many_missing(store):
 
 
 def test_get_many_some_missing(store, fcs):
-    put_fcs(store, fcs)
+    store.put(fcs)
     store.delete('boss')
-    store.sync()
     assert_set_eq(store.get_many(['boss', 'patti']),
                   [('boss', None), ('patti', fcget(fcs, 'patti'))])
 
 
 def test_put_overwrite(store, fcs):
-    put_fcs(store, fcs)
+    store.put(fcs)
     newfc = FC({'NAME': {'foo': 1, 'bar': 1}})
     store.put([('boss', newfc)])
-    store.sync()
     got = store.get('boss')
     assert got == newfc
 
 
 def test_canopy_scan(store, fcs):
-    put_fcs(store, fcs)
+    store.put(fcs)
     # Searching by the boss will connect with big-man because they both
     # have `the` in the `boNAME` feature.
     assert frozenset(store.canopy_scan_ids('boss')) \
@@ -192,7 +180,7 @@ def test_canopy_scan(store, fcs):
 
 
 def test_canopy_scan_partial(store, fcs):
-    put_fcs(store, fcs)
+    store.put(fcs)
     assert_set_eq(store.canopy_scan('boss'),
                   [('big-man', fcget(fcs, 'big-man'))])
 
@@ -204,7 +192,7 @@ def test_canopy_scan_partial(store, fcs):
 
 
 def test_canopy_scan_emphemeral(store, fcs):
-    put_fcs(store, fcs)
+    store.put(fcs)
     query_id = 'pattim'
 
     query_fc = FC({'NAME': {'Patti Mayonnaise': 1}})
@@ -217,8 +205,8 @@ def test_canopy_scan_emphemeral(store, fcs):
         == frozenset(['patti'])
 
 
-def test_fc_type(store, fcs):
-    put_fcs(store, fcs)
+def test_optional_indexing(store, fcs):
+    store.put(fcs)
     foo1 = FC({
         'NAME': {'Foo Bar': 1},
         'boNAME': {'bruce': 1, 'patti': 1, 'foo': 1, 'bar': 1},
@@ -227,48 +215,20 @@ def test_fc_type(store, fcs):
         'NAME': {'Foo Baz': 1},
         'boNAME': {'foo': 1, 'baz': 1},
     })
-    store.put([('foo1', foo1), ('foo2', foo2)], fc_type='zzz')
-    store.sync()
+    store.put([('foo1', foo1), ('foo2', foo2)], indexes=False)
 
     # Are they really there?
     assert store.get('foo1') == foo1
     assert store.get('foo2') == foo2
 
-    # Make sure id scans respect fc_type.
-    assert frozenset(store.scan_ids()) \
-        == frozenset(['foo1', 'foo2', 'boss', 'big-man', 'patti'])
-    assert frozenset(store.scan_ids(fc_type='fc')) \
-        == frozenset(['boss', 'big-man', 'patti'])
-    assert frozenset(store.scan_ids(fc_type='zzz')) \
-        == frozenset(['foo1', 'foo2'])
-
-    # Make sure prefix id scans respect fc_type.
-    assert frozenset(store.scan_prefix_ids('f', fc_type=None)) \
-        == frozenset(['foo1', 'foo2'])
-    assert frozenset(store.scan_prefix_ids('f', fc_type='fc')) \
-        == frozenset()
-    assert frozenset(store.scan_prefix_ids('f', fc_type='zzz')) \
-        == frozenset(['foo1', 'foo2'])
-
-    # Make sure canopy scans respect fc_type.
-    assert frozenset(store.canopy_scan_ids('foo1', fc_type=None)) \
-        == frozenset(['boss', 'patti', 'foo2'])
-    assert frozenset(store.canopy_scan_ids('foo1', fc_type='fc')) \
+    assert frozenset(store.canopy_scan_ids('foo1')) \
         == frozenset(['boss', 'patti'])
-    assert frozenset(store.canopy_scan_ids('foo1', fc_type='zzz')) \
-        == frozenset(['foo2'])
-
-    # And simple index scans too.
-    assert frozenset(store.index_scan('boNAME', 'patti', fc_type=None)) \
-        == frozenset(['patti', 'foo1'])
-    assert frozenset(store.index_scan('boNAME', 'patti', fc_type='fc')) \
+    assert frozenset(store.index_scan('boNAME', 'patti')) \
         == frozenset(['patti'])
-    assert frozenset(store.index_scan('boNAME', 'patti', fc_type='zzz')) \
-        == frozenset(['foo1'])
 
 
 def test_index_scan(store, fcs):
-    put_fcs(store, fcs)
+    store.put(fcs)
     assert frozenset(store.index_scan('boNAME', 'the')) \
         == frozenset(['boss', 'big-man'])
 
@@ -288,14 +248,13 @@ def test_scan_ids(store):
         ('f', FC()), ('g', FC()), ('h', FC()), ('i', FC()), ('j', FC()),
         ('k', FC()), ('l', FC()), ('m', FC()), ('n', FC()), ('o', FC()),
     ])
-    store.sync()
     expected = 'abcdefghijklmno'
     got = ''.join(sorted(store.scan_ids()))
     assert expected == got
 
 
 def test_index_mapping_canopy(fcs):
-    store = ElasticStore(
+    store = ElasticStoreSync(
         hosts='172.17.42.1',
         feature_indexes=[{
             'NAME': {
@@ -304,7 +263,6 @@ def test_index_mapping_canopy(fcs):
             },
         }])
     store.put(fcs)
-    store.sync()
 
     query = FC({'NAME': {'The Boss': 1, 'clarence': 1}})
     assert frozenset(store.canopy_scan_ids('ephemeral', query)) \
@@ -312,7 +270,7 @@ def test_index_mapping_canopy(fcs):
 
 
 def test_index_mapping_raw_scan(fcs):
-    store = ElasticStore(
+    store = ElasticStoreSync(
         hosts='172.17.42.1',
         feature_indexes=[{
             'NAME': {
@@ -321,7 +279,6 @@ def test_index_mapping_raw_scan(fcs):
             },
         }])
     store.put(fcs)
-    store.sync()
 
     assert frozenset(store.index_scan('NAME', 'The Boss')) \
         == frozenset(['boss'])
