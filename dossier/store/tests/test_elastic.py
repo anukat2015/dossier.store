@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.yield_fixture  # noqa
-def store():
-    s = create_test_store()
+def store(elastic_address):
+    s = create_test_store(elastic_address)
     yield s
     s.delete_all()
 
@@ -58,9 +58,9 @@ def fcs():
     }))]
 
 
-def create_test_store():
+def create_test_store(host):
     return ElasticStoreSync(
-        hosts='172.17.42.1', namespace='tests',
+        hosts=host, namespace='tests',
         feature_indexes=[{
             'NAME': {'es_index_type': 'string', 'feature_names': ['NAME']},
         }, {
@@ -137,11 +137,11 @@ def test_delete(store, fcs):
     assert len(list(store.scan_ids())) == len(fcs) - 1
 
 
-def test_delete_all(store, fcs):
+def test_delete_all(elastic_address, store, fcs):
     store.put(fcs)
     store.delete_all()
     try:
-        store = create_test_store()
+        store = create_test_store(elastic_address)
         assert len(list(store.scan_ids())) == 0
     finally:
         store.delete_all()
@@ -253,9 +253,9 @@ def test_scan_ids(store):
     assert expected == got
 
 
-def test_index_mapping_keyword(fcs):
+def test_index_mapping_keyword(elastic_address, fcs):
     store = ElasticStoreSync(
-        hosts='172.17.42.1', namespace='tests',
+        hosts=elastic_address, namespace='tests',
         feature_indexes=[{
             'NAME': {
                 'es_index_type': 'string',
@@ -269,9 +269,9 @@ def test_index_mapping_keyword(fcs):
         == frozenset(['boss', 'big-man'])
 
 
-def test_index_mapping_raw_scan(fcs):
+def test_index_mapping_raw_scan(elastic_address, fcs):
     store = ElasticStoreSync(
-        hosts='172.17.42.1', namespace='tests',
+        hosts=elastic_address, namespace='tests',
         feature_indexes=[{
             'NAME': {
                 'es_index_type': 'string',
