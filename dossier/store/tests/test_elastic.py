@@ -60,7 +60,7 @@ def fcs():
 
 def create_test_store():
     return ElasticStoreSync(
-        hosts='172.17.42.1',
+        hosts='172.17.42.1', namespace='tests',
         feature_indexes=[{
             'NAME': {'es_index_type': 'string', 'feature_names': ['NAME']},
         }, {
@@ -171,37 +171,37 @@ def test_put_overwrite(store, fcs):
     assert got == newfc
 
 
-def test_canopy_scan(store, fcs):
+def test_keyword_scan(store, fcs):
     store.put(fcs)
     # Searching by the boss will connect with big-man because they both
     # have `the` in the `boNAME` feature.
-    assert frozenset(store.canopy_scan_ids('boss')) \
+    assert frozenset(store.keyword_scan_ids('boss')) \
         == frozenset(['big-man'])
 
 
-def test_canopy_scan_partial(store, fcs):
+def test_keyword_scan_partial(store, fcs):
     store.put(fcs)
-    assert_set_eq(store.canopy_scan('boss'),
+    assert_set_eq(store.keyword_scan('boss'),
                   [('big-man', fcget(fcs, 'big-man'))])
 
     expected = FC({
         'NAME': {'Clarence Clemons': 8, 'The Big Man': 1},
     })
-    assert_set_eq(store.canopy_scan('boss', feature_names=['NAME']),
+    assert_set_eq(store.keyword_scan('boss', feature_names=['NAME']),
                   [('big-man', expected)])
 
 
-def test_canopy_scan_emphemeral(store, fcs):
+def test_keyword_scan_emphemeral(store, fcs):
     store.put(fcs)
     query_id = 'pattim'
 
     query_fc = FC({'NAME': {'Patti Mayonnaise': 1}})
-    assert frozenset(store.canopy_scan_ids(query_id, query_fc)) \
+    assert frozenset(store.keyword_scan_ids(query_id, query_fc)) \
         == frozenset()
 
     query_fc['boNAME']['patti'] += 1
     query_fc['boNAME']['mayonnaise'] += 1
-    assert frozenset(store.canopy_scan_ids(query_id, query_fc)) \
+    assert frozenset(store.keyword_scan_ids(query_id, query_fc)) \
         == frozenset(['patti'])
 
 
@@ -221,15 +221,15 @@ def test_optional_indexing(store, fcs):
     assert store.get('foo1') == foo1
     assert store.get('foo2') == foo2
 
-    assert frozenset(store.canopy_scan_ids('foo1')) \
+    assert frozenset(store.keyword_scan_ids('foo1')) \
         == frozenset(['boss', 'patti'])
-    assert frozenset(store.index_scan('boNAME', 'patti')) \
+    assert frozenset(store.index_scan_ids('boNAME', 'patti')) \
         == frozenset(['patti'])
 
 
-def test_index_scan(store, fcs):
+def test_index_scan_ids(store, fcs):
     store.put(fcs)
-    assert frozenset(store.index_scan('boNAME', 'the')) \
+    assert frozenset(store.index_scan_ids('boNAME', 'the')) \
         == frozenset(['boss', 'big-man'])
 
 
@@ -253,9 +253,9 @@ def test_scan_ids(store):
     assert expected == got
 
 
-def test_index_mapping_canopy(fcs):
+def test_index_mapping_keyword(fcs):
     store = ElasticStoreSync(
-        hosts='172.17.42.1',
+        hosts='172.17.42.1', namespace='tests',
         feature_indexes=[{
             'NAME': {
                 'es_index_type': 'string',
@@ -265,13 +265,13 @@ def test_index_mapping_canopy(fcs):
     store.put(fcs)
 
     query = FC({'NAME': {'The Boss': 1, 'clarence': 1}})
-    assert frozenset(store.canopy_scan_ids('ephemeral', query)) \
+    assert frozenset(store.keyword_scan_ids('ephemeral', query)) \
         == frozenset(['boss', 'big-man'])
 
 
 def test_index_mapping_raw_scan(fcs):
     store = ElasticStoreSync(
-        hosts='172.17.42.1',
+        hosts='172.17.42.1', namespace='tests',
         feature_indexes=[{
             'NAME': {
                 'es_index_type': 'string',
@@ -280,7 +280,7 @@ def test_index_mapping_raw_scan(fcs):
         }])
     store.put(fcs)
 
-    assert frozenset(store.index_scan('NAME', 'The Boss')) \
+    assert frozenset(store.index_scan_ids('NAME', 'The Boss')) \
         == frozenset(['boss'])
-    assert frozenset(store.index_scan('NAME', 'clarence')) \
+    assert frozenset(store.index_scan_ids('NAME', 'clarence')) \
         == frozenset(['big-man'])

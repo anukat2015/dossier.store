@@ -17,25 +17,103 @@ import yakonfig
 from elasticsearch import Elasticsearch, NotFoundError, TransportError
 from elasticsearch.helpers import bulk, scan
 
+
 logger = logging.getLogger(__name__)
 
 
 class ElasticStore(object):
+    '''A feature collection store on ElasticSearch.
+
+    Feature collections are maps from feature names to features.
+    The representation of each feature is unspecified by this
+    interface.
+
+    This class exposes a similar interface to the regular ``Store``
+    class, with a few additions:
+
+      1. Canopy scans are implemented natively with ElasticSearch,
+         so they are provided as methods here.
+      2. On all retrieval methods, the caller can pass a list of
+         feature names (or feature name wildcards) to retrieve.
+         If your FCs have lots of features, this is useful when
+         you only need to retrieve a small fraction of them.
+
+    .. automethod:: __init__
+    .. automethod:: configured
+
+    **CRUD operations**
+
+    .. automethod:: get
+    .. automethod:: get_many
+    .. automethod:: put
+    .. automethod:: delete
+    .. automethod:: delete_all
+    .. automethod:: delete_index
+
+    **Keyword scanning**
+
+    .. automethod:: keyword_scan
+    .. automethod:: keyword_scan_ids
+
+    **Scanning ids in lexicographic order**
+
+    Note that these operations may be inefficient because of
+    how ElasticSearch handles sorting.
+
+    .. automethod:: scan
+    .. automethod:: scan_ids
+    .. automethod:: scan_prefix
+    .. automethod:: scan_prefix_ids
+
+    **Low-level**
+
+    .. automethod:: sync
+    .. automethod:: index_scan_ids
+    '''
     config_name = 'dossier.store'
 
     @classmethod
     def configured(cls):
+        '''Create a new instance from the global configuration.
+
+        In order to use this, you must make sure that
+        :class:`ElasticStore` has been configured by :mod:`yakonfig`,
+        usually by passing the class to ``yakonfig.parse_args``.
+        '''
         return cls(**yakonfig.get_global_config('dossier.store'))
 
     def __init__(self, hosts=None, namespace=None, type='fc',
                  feature_indexes=None, shards=10, replicas=0):
+        '''Create a new store or connect to an existing one.
+
+        :param hosts:
+          Passed directly to ``elasticsearch.Elasticsearch``
+          constructor. Required.
+        :param str namespace:
+          Used as the ES index name, prefixed by ``fcs_``. Required.
+        :param str type:
+          The ES type to use. If this is set to ``None``, then a random
+          unique string is used.
+        :param [str] feature_indexes:
+          A list of names of features to index.
+        :param int shards:
+          The number of shards to use for this index. This only has an
+          effect if the ES index didn't previous exist.
+        :param int replicas:
+          The number of replicas to use for this index. This only has
+          an effect if the ES index didn't previous exist.
+        :rtype: :class:`ElasticStore`
+        '''
         if hosts is None:
             raise yakonfig.ProgrammerError(
                 'ElasticStore needs at least one host specified.')
         if namespace is None:
-            namespace = unicode(uuid.uuid4())
+            raise yakonfig.ProgrammerError(
+                'ElasticStore needs a namespace defined.')
+        if type is None:
+            type = unicode(uuid.uuid4())
         self.conn = Elasticsearch(hosts=hosts)
-        self.index = '%s_fcs' % namespace
+        self.index = 'fcs_%s' % namespace
         self.type = type
         self.shards = shards
         self.replicas = replicas
@@ -50,6 +128,17 @@ class ElasticStore(object):
             self._create()
 
     def get(self, content_id, feature_names=None):
+        '''Retrieve a feature collection.
+
+        If a feature collection with the given id does not
+        exist, then ``None`` is returned.
+
+        :param str content_id: Content identifier.
+        :param [str] feature_names:
+          A list of feature names to retrieve. When ``None``, all
+          features are retrieved. Wildcards are allowed.
+        :rtype: :class:`dossier.fc.FeatureCollection` or ``None``
+        '''
         try:
             resp = self.conn.get(index=self.index, doc_type=self.type,
                                  id=eid(content_id),
@@ -60,11 +149,25 @@ class ElasticStore(object):
         except:
             raise
 
-    def get_many(self, content_id_list, feature_names=None):
+    def get_many(self, content_ids, feature_names=None):
+        '''Returns an iterable of feature collections.
+
+        This efficiently retrieves multiple FCs corresponding to the
+        list of ids given. Tuples of identifier and feature collection
+        are yielded. If the feature collection for a given id does not
+        exist, then ``None`` is returned as the second element of the
+        tuple.
+
+        :param [str] content_ids: List of content ids.
+        :param [str] feature_names:
+          A list of feature names to retrieve. When ``None``, all
+          features are retrieved. Wildcards are allowed.
+        :rtype: Iterable of ``(content_id, FC)``
+        '''
         try:
             resp = self.conn.mget(index=self.index, doc_type=self.type,
                                   _source=self._source(feature_names),
-                                  body={'ids': map(eid, content_id_list)})
+                                  body={'ids': map(eid, content_ids)})
         except TransportError:
             return
         for doc in resp['docs']:
@@ -72,10 +175,23 @@ class ElasticStore(object):
             yield did(doc['_id']), fc
 
     def put(self, items, indexes=True):
+        '''Adds feature collections to the store.
+
+        This efficiently adds multiple FCs to the store. The iterable
+        of ``items`` given should yield tuples of ``(content_id, FC)``.
+
+        :param items: Iterable of ``(content_id, FC)``.
+        :param [str] feature_names:
+          A list of feature names to retrieve. When ``None``, all
+          features are retrieved. Wildcards are allowed.
+        '''
         actions = []
         for cid, fc in items:
             # TODO: If we store features in a columnar order, then we
             # could tell ES to index the feature values directly. ---AG
+            # (But is problematic because we want to preserve the ability
+            # to selectively index FCs. So we'd probably need two distinct
+            # doc types.)
             idxs = defaultdict(list)
             if indexes:
                 for fname in self.indexed_features:
@@ -92,29 +208,11 @@ class ElasticStore(object):
             })
         bulk(self.conn, actions, timeout=60, request_timeout=60)
 
-    def sync(self):
-        self.conn.indices.refresh(index=self.index)
-
-    def scan(self, *key_ranges, **kwargs):
-        for hit in self._scan(*key_ranges, **kwargs):
-            yield did(hit['_id']), fc_from_dict(hit['_source']['fc'])
-
-    def scan_ids(self, *key_ranges, **kwargs):
-        kwargs['feature_names'] = False
-        for hit in self._scan(*key_ranges, **kwargs):
-            yield did(hit['_id'])
-
-    def scan_prefix(self, prefix, feature_names=None):
-        resp = self._scan_prefix(prefix, feature_names=feature_names)
-        for hit in resp:
-            yield did(hit['_id']), fc_from_dict(hit['_source']['fc'])
-
-    def scan_prefix_ids(self, prefix):
-        resp = self._scan_prefix(prefix, feature_names=False)
-        for hit in resp:
-            yield did(hit['_id'])
-
     def delete(self, content_id):
+        '''Deletes the corresponding feature collection.
+
+        If the FC does not exist, then this is a no-op.
+        '''
         try:
             self.conn.delete(index=self.index, doc_type=self.type,
                              id=eid(content_id))
@@ -122,6 +220,12 @@ class ElasticStore(object):
             pass
 
     def delete_all(self):
+        '''Deletes all feature collections.
+
+        This does not destroy the ES index, but instead only
+        deletes all FCs with the configured document type
+        (defaults to ``fc``).
+        '''
         if self.conn.indices.exists(index=self.index):
             self.conn.delete_by_query(
                 index=self.index, doc_type=self.type, body={
@@ -129,21 +233,141 @@ class ElasticStore(object):
                 })
 
     def delete_index(self):
+        '''Deletes the underlying ES index.
+
+        Only use this if you know what you're doing. This destroys
+        the entire underlying ES index, which could be shared by
+        multiple distinct ElasticStore instances.
+        '''
         if self.conn.indices.exists(index=self.index):
             self.conn.indices.delete(index=self.index)
 
-    def canopy_scan(self, query_id, query_fc=None, feature_names=None):
-        it = self._canopy_scan(query_id, query_fc,
-                               feature_names=feature_names)
+    def sync(self):
+        '''Tells ES to tell Lucene to do an fsync.
+
+        This guarantees that any previous calls to ``put`` will be
+        flushed to disk and available in subsequent searches.
+
+        Generally, this should only be used in test code.
+        '''
+        self.conn.indices.refresh(index=self.index)
+
+    def scan(self, *key_ranges, **kwargs):
+        '''Scan for FCs in the given id ranges.
+
+        :param key_ranges:
+          ``key_ranges`` should be a list of pairs of ranges. The first
+          value is the lower bound id and the second value is the
+          upper bound id. Use ``()`` in either position to leave it
+          unbounded. If no ``key_ranges`` are given, then all FCs in
+          the store are returned.
+        :param [str] feature_names:
+          A list of feature names to retrieve. When ``None``, all
+          features are retrieved. Wildcards are allowed.
+        :rtype: Iterable of ``(content_id, FC)``
+        '''
+        for hit in self._scan(*key_ranges, **kwargs):
+            yield did(hit['_id']), fc_from_dict(hit['_source']['fc'])
+
+    def scan_ids(self, *key_ranges, **kwargs):
+        '''Scan for ids only in the given id ranges.
+
+        :param key_ranges:
+          ``key_ranges`` should be a list of pairs of ranges. The first
+          value is the lower bound id and the second value is the
+          upper bound id. Use ``()`` in either position to leave it
+          unbounded. If no ``key_ranges`` are given, then all FCs in
+          the store are returned.
+        :param [str] feature_names:
+          A list of feature names to retrieve. When ``None``, all
+          features are retrieved. Wildcards are allowed.
+        :rtype: Iterable of ``content_id``
+        '''
+        kwargs['feature_names'] = False
+        for hit in self._scan(*key_ranges, **kwargs):
+            yield did(hit['_id'])
+
+    def scan_prefix(self, prefix, feature_names=None):
+        '''Scan for FCs with a given prefix.
+
+        :param str prefix: Identifier prefix.
+        :param [str] feature_names:
+          A list of feature names to retrieve. When ``None``, all
+          features are retrieved. Wildcards are allowed.
+        :rtype: Iterable of ``(content_id, FC)``
+        '''
+        resp = self._scan_prefix(prefix, feature_names=feature_names)
+        for hit in resp:
+            yield did(hit['_id']), fc_from_dict(hit['_source']['fc'])
+
+    def scan_prefix_ids(self, prefix):
+        '''Scan for ids with a given prefix.
+
+        :param str prefix: Identifier prefix.
+        :param [str] feature_names:
+          A list of feature names to retrieve. When ``None``, all
+          features are retrieved. Wildcards are allowed.
+        :rtype: Iterable of ``content_id``
+        '''
+        resp = self._scan_prefix(prefix, feature_names=False)
+        for hit in resp:
+            yield did(hit['_id'])
+
+    def keyword_scan(self, query_id=None, query_fc=None, feature_names=None):
+        '''Keyword scan for feature collections.
+
+        This performs a keyword scan using the query given. A keyword
+        scan searches for FCs with terms in each of the query's indexed
+        fields.
+
+        At least one of ``query_id`` or ``query_fc`` must be provided.
+        If ``query_fc`` is ``None``, then the query is retrieved
+        automatically corresponding to ``query_id``.
+
+        :param str query_id: Optional query id.
+        :param query_fc: Optional query feature collection.
+        :type query_fc: :class:`dossier.fc.FeatureCollection`
+        :param [str] feature_names:
+          A list of feature names to retrieve. When ``None``, all
+          features are retrieved. Wildcards are allowed.
+        :rtype: Iterable of ``(content_id, FC)``
+        '''
+        it = self._keyword_scan(query_id, query_fc,
+                                feature_names=feature_names)
         for hit in it:
             yield did(hit['_id']), fc_from_dict(hit['_source']['fc'])
 
-    def canopy_scan_ids(self, query_id, query_fc=None):
-        it = self._canopy_scan(query_id, query_fc, feature_names=False)
+    def keyword_scan_ids(self, query_id=None, query_fc=None):
+        '''Keyword scan for ids.
+
+        This performs a keyword scan using the query given. A keyword
+        scan searches for FCs with terms in each of the query's indexed
+        fields.
+
+        At least one of ``query_id`` or ``query_fc`` must be provided.
+        If ``query_fc`` is ``None``, then the query is retrieved
+        automatically corresponding to ``query_id``.
+
+        :param str query_id: Optional query id.
+        :param query_fc: Optional query feature collection.
+        :type query_fc: :class:`dossier.fc.FeatureCollection`
+        :rtype: Iterable of ``content_id``
+        '''
+        it = self._keyword_scan(query_id, query_fc, feature_names=False)
         for hit in it:
             yield did(hit['_id'])
 
-    def index_scan(self, fname, val):
+    def index_scan_ids(self, fname, val):
+        '''Low-level keyword index scan for ids.
+
+        Retrieves identifiers of FCs that have a feature value
+        ``val`` in the feature named ``fname``. Note that
+        ``fname`` must be indexed.
+
+        :param str fname: Feature name.
+        :param str val: Feature value.
+        :rtype: Iterable of ``content_id``
+        '''
         idx_name = fname_to_idx_name(fname)
         disj = []
         for fname in self.indexes[idx_name]['feature_names']:
@@ -160,15 +384,15 @@ class ElasticStore(object):
         for hit in hits:
             yield did(hit['_id'])
 
-    def _canopy_scan(self, query_id, query_fc, feature_names=None):
+    def _keyword_scan(self, query_id, query_fc, feature_names=None):
         # Why are we running multiple scans? Why are we deduplicating?
         #
         # It turns out that, in our various systems, it can be important to
-        # prioritize the order of results returned in a canopy scan based on
+        # prioritize the order of results returned in a keyword scan based on
         # the feature index that is being searched. For example, we typically
-        # want to start a canopy scan with the results from a search on `NAME`,
-        # which we don't want to be mingled with the results from a search on
-        # some other feature.
+        # want to start a keyword scan with the results from a search on
+        # `NAME`, which we don't want to be mingled with the results from a
+        # search on some other feature.
         #
         # The simplest way to guarantee this type of prioritization is to run
         # a query for each index in the order in which they were defined.
@@ -215,7 +439,7 @@ class ElasticStore(object):
                 },
             }
 
-            logger.info('canopy scanning index: %s', iname)
+            logger.info('keyword scanning index: %s', iname)
             hits = scan(
                 self.conn, index=self.index, doc_type=self.type,
                 query={
@@ -264,6 +488,7 @@ class ElasticStore(object):
                     })
 
     def _source(self, feature_names):
+        '''Maps feature names to ES's "_source" field.'''
         if feature_names is None:
             return True
         elif isinstance(feature_names, bool):
@@ -272,6 +497,7 @@ class ElasticStore(object):
             return map(lambda n: 'fc.' + n, feature_names)
 
     def _range_filters(self, *key_ranges):
+        'Creates ES filters for key ranges used in scanning.'
         filters = []
         for s, e in key_ranges:
             if isinstance(s, basestring):
@@ -296,6 +522,7 @@ class ElasticStore(object):
             return filters
 
     def _create(self):
+        'Create the index and field type mapping.'
         self.conn.indices.create(
             index=self.index, timeout=60, request_timeout=60, body={
                 'settings': {
@@ -330,6 +557,7 @@ class ElasticStore(object):
         self.conn.cluster.health(index=self.index, wait_for_status='yellow')
 
     def _get_index_mappings(self):
+        'Retrieve the field mappings. Useful for debugging.'
         maps = {}
         for fname, config in self.indexes.iteritems():
             maps[fname] = {
@@ -340,6 +568,7 @@ class ElasticStore(object):
         return maps
 
     def _get_field_types(self):
+        'Retrieve the field types. Useful for debugging.'
         mapping = self.conn.indices.get_mapping(
             index=self.index, doc_type=self.type)
         return mapping[self.index]['mappings'][self.type]['properties']
@@ -367,6 +596,7 @@ class ElasticStore(object):
                 self.indexed_features.add(fname)
 
     def _fc_index_disjunction_from_query(self, query_fc, idx_name):
+        'Creates a disjunction for keyword scan queries.'
         fname = idx_name_to_fname(idx_name)
         if len(query_fc.get(fname, [])) == 0:
             return []
@@ -379,6 +609,14 @@ class ElasticStore(object):
 
 
 class ElasticStoreSync(ElasticStore):
+    '''Synchronous ElasticSearch backend.
+
+    This is just like :class:`ElasticStore`, except it will call `sync`
+    after every ``put`` and ``delete`` operation.
+
+    This is useful for testing where it is most convenient for every
+    write operation to be synchronous.
+    '''
     def put(self, *args, **kwargs):
         super(ElasticStoreSync, self).put(*args, **kwargs)
         self.sync()
@@ -388,14 +626,7 @@ class ElasticStoreSync(ElasticStore):
         self.sync()
 
 
-fcs_encoded = 0
-fcs_decoded = 0
-
-
 def fc_to_dict(fc):
-    global fcs_encoded
-    fcs_encoded += 1
-
     d = {}
     for name, feat in fc.to_dict().iteritems():
         d[name] = base64.b64encode(cbor.dumps(feat))
@@ -403,9 +634,6 @@ def fc_to_dict(fc):
 
 
 def fc_from_dict(fc_dict):
-    global fcs_decoded
-    fcs_decoded += 1
-
     d = {}
     for name, feat in fc_dict.iteritems():
         d[name] = cbor.loads(base64.b64decode(feat))

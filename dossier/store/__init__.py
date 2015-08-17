@@ -3,11 +3,26 @@
 .. This software is released under an MIT/X11 open source license.
    Copyright 2012-2014 Diffeo, Inc.
 
-mod:`dossier.store` provides a convenient interface to a mod:`kvlayer`
-table for storing :class:`dossier.fc.FeatureCollection`. The
-interface consists of methods to query, search, add and remove feature
-collections from the store. It also provides functions for defining and
-searching indexes.
+Compatible interfaces on both ElasticSearch and :mod:`kvlayer`
+are provided.
+
+ElasticSearch based storage
+===========================
+:mod:`dossier.store` provides an interface to storing feature
+collections in ElasticSearch.
+
+.. autoclass:: ElasticStore
+.. autoclass:: ElasticStoreSync
+
+
+kvlayer based storage
+=====================
+
+:mod:`dossier.store` also provides a convenient interface to a
+:mod:`kvlayer` table for storing :class:`dossier.fc.FeatureCollection`.
+The interface consists of methods to query, search, add and remove
+feature collections from the store. It also provides functions for
+defining and searching indexes.
 
 Using a storage backend in your code requires a working ``kvlayer``
 configuration, which is usually written in a YAML file like so:
