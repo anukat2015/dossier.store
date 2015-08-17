@@ -114,6 +114,31 @@ def test_scan_all(store, fcs):
         == list(['big-man', 'boss', 'patti'])
 
 
+def test_scan_all_random(store):
+    import random
+    ids = []
+    for _ in xrange(100):
+        s = ''.join([chr(random.randrange(ord('a'), ord('z') + 1))
+                     for _ in xrange(random.randrange(2, 20))])
+        ids.append(s)
+    ids = list(set(ids))
+
+    assert len(list(store.scan_ids())) == 0
+    store.put([(id, FC()) for id in ids])
+    assert list(store.scan_ids()) == sorted(ids)
+
+
+def test_scan_all_weird(store):
+    ids = [
+        '99bc49e2492a48cb9179d70d3c11ea13',
+        'd858432fd50f4cb5a01af290358cb0d1',
+        'be75888da4854c15859692b6db590f55',
+    ]
+    assert len(list(store.scan_ids())) == 0
+    store.put([(id, FC()) for id in ids])
+    assert list(store.scan_ids()) == sorted(ids)
+
+
 def test_scan_some(store, fcs):
     store.put(fcs)
     assert_set_eq(store.scan(('b', 'b')),

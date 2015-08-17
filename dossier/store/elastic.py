@@ -285,6 +285,7 @@ class ElasticStore(object):
         '''
         kwargs['feature_names'] = False
         for hit in self._scan(*key_ranges, **kwargs):
+            print('scan_ids', hit['_id'])
             yield did(hit['_id'])
 
     def scan_prefix(self, prefix, feature_names=None):
