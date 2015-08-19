@@ -125,7 +125,11 @@ class ElasticStore(object):
             # This can race, but that should be OK.
             # Worst case, we initialize with the same settings more than
             # once.
-            self._create()
+            self._create_index()
+        mapping = self.conn.indices.get_mapping(
+            index=self.index, doc_type=self.type)
+        if len(mapping) == 0:
+            self._create_mappings()
 
     def get(self, content_id, feature_names=None):
         '''Retrieve a feature collection.
@@ -285,7 +289,6 @@ class ElasticStore(object):
         '''
         kwargs['feature_names'] = False
         for hit in self._scan(*key_ranges, **kwargs):
-            print('scan_ids', hit['_id'])
             yield did(hit['_id'])
 
     def scan_prefix(self, prefix, feature_names=None):
@@ -458,7 +461,9 @@ class ElasticStore(object):
                     _source=self._source(feature_names),
                     preserve_order=True,
                     query={
-                        'sort': {'_id': {'order': 'asc'}},
+                        # Sorting by `_id` seems to fail spuriously and
+                        # I have no idea why. ---AG
+                        'sort': {'_uid': {'order': 'asc'}},
                         'query': {
                             'constant_score': {
                                 'filter': {
@@ -484,7 +489,9 @@ class ElasticStore(object):
                     _source=self._source(feature_names),
                     preserve_order=True,
                     query={
-                        'sort': {'_id': {'order': 'asc'}},
+                        # Sorting by `_id` seems to fail spuriously and
+                        # I have no idea why. ---AG
+                        'sort': {'_uid': {'order': 'asc'}},
                         'query': query,
                     })
 
@@ -522,8 +529,8 @@ class ElasticStore(object):
         else:
             return filters
 
-    def _create(self):
-        'Create the index and field type mapping.'
+    def _create_index(self):
+        'Create the index'
         self.conn.indices.create(
             index=self.index, timeout=60, request_timeout=60, body={
                 'settings': {
@@ -531,17 +538,23 @@ class ElasticStore(object):
                     'number_of_replicas': self.replicas,
                 },
             })
+
+    def _create_mappings(self):
+        'Create the field type mapping.'
         self.conn.indices.put_mapping(
             index=self.index, doc_type=self.type,
             timeout=60, request_timeout=60,
             body={
-                'fc': {
+                self.type: {
                     'dynamic_templates': [{
                         'default_no_analyze_fc': {
                             'match': 'fc.*',
                             'mapping': {'index': 'no'},
                         },
                     }],
+                    '_all': {
+                        'enabled': False,
+                    },
                     '_id': {
                         'index': 'not_analyzed',  # allows range queries
                     },
