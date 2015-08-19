@@ -69,6 +69,7 @@ class ElasticStore(object):
 
     .. automethod:: sync
     .. automethod:: index_scan_ids
+    .. automethod:: index_names
     '''
     config_name = 'dossier.store'
 
@@ -387,6 +388,13 @@ class ElasticStore(object):
         })
         for hit in hits:
             yield did(hit['_id'])
+
+    def index_names(self):
+        '''Returns a list of all defined index names.
+
+        :rtype: list of ``unicode``
+        '''
+        return map(unicode, map(idx_name_to_fname, self.indexes))
 
     def _keyword_scan(self, query_id, query_fc, feature_names=None):
         # Why are we running multiple scans? Why are we deduplicating?
