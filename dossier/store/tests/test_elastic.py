@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.yield_fixture  # noqa
-def store(elastic_address):
-    s = create_test_store(elastic_address)
+def store(elastic_address, namespace_string):
+    s = create_test_store(elastic_address, namespace_string)
     yield s
     s.delete_all()
 
@@ -58,9 +58,9 @@ def fcs():
     }))]
 
 
-def create_test_store(host):
+def create_test_store(host, namespace):
     return ElasticStoreSync(
-        hosts=host, namespace='tests',
+        hosts=host, namespace=namespace,
         feature_indexes=[{
             'NAME': {'es_index_type': 'string', 'feature_names': ['NAME']},
         }, {
@@ -162,11 +162,11 @@ def test_delete(store, fcs):
     assert len(list(store.scan_ids())) == len(fcs) - 1
 
 
-def test_delete_all(elastic_address, store, fcs):
+def test_delete_all(elastic_address, namespace_string, store, fcs):
     store.put(fcs)
     store.delete_all()
     try:
-        store = create_test_store(elastic_address)
+        store = create_test_store(elastic_address, namespace_string)
         assert len(list(store.scan_ids())) == 0
     finally:
         store.delete_all()
@@ -278,9 +278,9 @@ def test_scan_ids(store):
     assert expected == got
 
 
-def test_index_mapping_keyword(elastic_address, fcs):
+def test_index_mapping_keyword(elastic_address, namespace_string, fcs):
     store = ElasticStoreSync(
-        hosts=elastic_address, namespace='tests',
+        hosts=elastic_address, namespace=namespace_string,
         feature_indexes=[{
             'NAME': {
                 'es_index_type': 'string',
@@ -294,9 +294,9 @@ def test_index_mapping_keyword(elastic_address, fcs):
         == frozenset(['boss', 'big-man'])
 
 
-def test_index_mapping_raw_scan(elastic_address, fcs):
+def test_index_mapping_raw_scan(elastic_address, namespace_string, fcs):
     store = ElasticStoreSync(
-        hosts=elastic_address, namespace='tests',
+        hosts=elastic_address, namespace=namespace_string,
         feature_indexes=[{
             'NAME': {
                 'es_index_type': 'string',
