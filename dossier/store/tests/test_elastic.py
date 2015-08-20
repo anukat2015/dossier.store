@@ -36,6 +36,42 @@ def fcs():
             'the': 1,
             'boss': 1,
         },
+    })), ('patti', FC({
+        'NAME': {
+            'Patti Scialfa': 1,
+        },
+        'boNAME': {
+            'patti': 10,
+            'scialfa': 1,
+        },
+    })), ('big-man', FC({
+        'NAME': {
+            'Clarence Clemons': 8,
+            'The Big Man': 1,
+        },
+        'boNAME': {
+            'clarence': 8,
+            'clemons': 8,
+            'the': 1,
+            'big': 1,
+            'man': 1,
+        },
+    }))]
+
+
+@pytest.fixture
+def fcs_texts(fcs):
+    return [('boss', FC({
+        'NAME': {
+            'Bruce Springsteen': 2,
+            'The Boss': 1,
+        },
+        'boNAME': {
+            'bruce': 2,
+            'springsteen': 5,
+            'the': 1,
+            'boss': 1,
+        },
         'body': u"The screen door slams, Mary's dress sways",
     })), ('patti', FC({
         'NAME': {
@@ -316,8 +352,8 @@ def test_index_mapping_raw_scan(elastic_address, namespace_string, fcs):
         == frozenset(['big-man'])
 
 
-def test_fulltext_scan(store, fcs):
-    store.put(fcs)
+def test_fulltext_scan(store, fcs_texts):
+    store.put(fcs_texts)
     assert frozenset(map(itemgetter(1),
                          store.fulltext_scan_ids('body', u"valley"))) \
         == frozenset(['patti'])
@@ -329,6 +365,6 @@ def test_fulltext_scan(store, fcs):
         == frozenset(['boss'])
 
 
-def test_fulltext_not_stored(store, fcs):
-    store.put(fcs)
+def test_fulltext_not_stored(store, fcs_texts):
+    store.put(fcs_texts)
     assert 'body' not in store.get('boss')
