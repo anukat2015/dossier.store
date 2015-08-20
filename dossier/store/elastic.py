@@ -84,7 +84,8 @@ class ElasticStore(object):
         return cls(**yakonfig.get_global_config('dossier.store'))
 
     def __init__(self, hosts=None, namespace=None, type='fc',
-                 feature_indexes=None, shards=10, replicas=0):
+                 feature_indexes=None, shards=10, replicas=0,
+                 fulltext_indexes=None):
         '''Create a new store or connect to an existing one.
 
         :param hosts:
@@ -120,6 +121,7 @@ class ElasticStore(object):
         self.replicas = replicas
         self.indexes = OrderedDict()
         self.indexed_features = set()
+        self.fulltext_indexes = set(fulltext_indexes or [])
 
         self._normalize_feature_indexes(feature_indexes)
         if not self.conn.indices.exists(index=self.index):
@@ -148,7 +150,7 @@ class ElasticStore(object):
             resp = self.conn.get(index=self.index, doc_type=self.type,
                                  id=eid(content_id),
                                  _source=self._source(feature_names))
-            return fc_from_dict(resp['_source']['fc'])
+            return self.fc_from_dict(resp['_source']['fc'])
         except NotFoundError:
             return None
         except:
@@ -176,7 +178,9 @@ class ElasticStore(object):
         except TransportError:
             return
         for doc in resp['docs']:
-            fc = fc_from_dict(doc['_source']['fc']) if doc['found'] else None
+            fc = None
+            if doc['found']:
+                fc = self.fc_from_dict(doc['_source']['fc'])
             yield did(doc['_id']), fc
 
     def put(self, items, indexes=True):
@@ -202,13 +206,16 @@ class ElasticStore(object):
                 for fname in self.indexed_features:
                     if fname in fc:
                         idxs[fname_to_idx_name(fname)].extend(fc[fname])
+                for fname in self.fulltext_indexes:
+                    if isinstance(fc.get(fname), unicode):
+                        idxs[fname_to_full_idx_name(fname)] = fc[fname]
             actions.append({
                 '_index': self.index,
                 '_type': self.type,
                 '_id': eid(cid),
                 '_op_type': 'index',
                 '_source': dict(idxs, **{
-                    'fc': fc_to_dict(fc),
+                    'fc': self.fc_to_dict(fc),
                 }),
             })
         bulk(self.conn, actions, timeout=60, request_timeout=60)
@@ -272,7 +279,7 @@ class ElasticStore(object):
         :rtype: Iterable of ``(content_id, FC)``
         '''
         for hit in self._scan(*key_ranges, **kwargs):
-            yield did(hit['_id']), fc_from_dict(hit['_source']['fc'])
+            yield did(hit['_id']), self.fc_from_dict(hit['_source']['fc'])
 
     def scan_ids(self, *key_ranges, **kwargs):
         '''Scan for ids only in the given id ranges.
@@ -303,7 +310,7 @@ class ElasticStore(object):
         '''
         resp = self._scan_prefix(prefix, feature_names=feature_names)
         for hit in resp:
-            yield did(hit['_id']), fc_from_dict(hit['_source']['fc'])
+            yield did(hit['_id']), self.fc_from_dict(hit['_source']['fc'])
 
     def scan_prefix_ids(self, prefix):
         '''Scan for ids with a given prefix.
@@ -317,6 +324,18 @@ class ElasticStore(object):
         resp = self._scan_prefix(prefix, feature_names=False)
         for hit in resp:
             yield did(hit['_id'])
+
+    def fulltext_scan(self, fname, query, feature_names=None):
+        it = self._fulltext_scan(fname, query, feature_names=feature_names)
+        for hit in it:
+            yield hit['_score'], \
+                did(hit['_id']), \
+                self.fc_from_dict(hit['_source']['fc'])
+
+    def fulltext_scan_ids(self, fname, query):
+        it = self._fulltext_scan(fname, query)
+        for hit in it:
+            yield hit['_score'], did(hit['_id'])
 
     def keyword_scan(self, query_id=None, query_fc=None, feature_names=None):
         '''Keyword scan for feature collections.
@@ -340,7 +359,7 @@ class ElasticStore(object):
         it = self._keyword_scan(query_id, query_fc,
                                 feature_names=feature_names)
         for hit in it:
-            yield did(hit['_id']), fc_from_dict(hit['_source']['fc'])
+            yield did(hit['_id']), self.fc_from_dict(hit['_source']['fc'])
 
     def keyword_scan_ids(self, query_id=None, query_fc=None):
         '''Keyword scan for ids.
@@ -373,10 +392,9 @@ class ElasticStore(object):
         :param str val: Feature value.
         :rtype: Iterable of ``content_id``
         '''
-        idx_name = fname_to_idx_name(fname)
         disj = []
-        for fname in self.indexes[idx_name]['feature_names']:
-            disj.append({'term': {fname_to_idx_name(fname): val}})
+        for fname2 in self.indexes[fname]['feature_names']:
+            disj.append({'term': {fname_to_idx_name(fname2): val}})
         query = {
             'constant_score': {
                 'filter': {'or': disj},
@@ -392,9 +410,32 @@ class ElasticStore(object):
     def index_names(self):
         '''Returns a list of all defined index names.
 
+        Note that this only includes boolean based indexes.
+
         :rtype: list of ``unicode``
         '''
-        return map(unicode, map(idx_name_to_fname, self.indexes))
+        return map(unicode, self.indexes.iterkeys())
+
+    def fulltext_index_names(self):
+        '''Returns a list of all defined fulltext index names.
+
+        :rtype: list of ``unicode``
+        '''
+        return map(unicode, self.fulltext_indexes)
+
+    def _fulltext_scan(self, fname, query, feature_names=None):
+        if fname not in self.fulltext_indexes:
+            raise KeyError(fname)
+        if not isinstance(query, unicode):
+            raise ValueError('query must be a unicode string, but it is: %r'
+                             % type(query))
+        logger.info('fulltext scanning: %s', fname)
+        query = {
+            'query': {'match': {fname_to_full_idx_name(fname): query}},
+            '_source': self._source(feature_names),
+        }
+        return scan(self.conn, index=self.index, doc_type=self.type,
+                    query=query)
 
     def _keyword_scan(self, query_id, query_fc, feature_names=None):
         # Why are we running multiple scans? Why are we deduplicating?
@@ -431,8 +472,8 @@ class ElasticStore(object):
         if query_fc is None:
             raise KeyError(query_id)
         ids = set([] if query_id is None else [eid(query_id)])
-        for iname in self.indexes:
-            term_disj = self._fc_index_disjunction_from_query(query_fc, iname)
+        for fname in self.indexes:
+            term_disj = self._fc_index_disjunction_from_query(query_fc, fname)
             if len(term_disj) == 0:
                 continue
             query = {
@@ -451,7 +492,7 @@ class ElasticStore(object):
                 },
             }
 
-            logger.info('keyword scanning index: %s', iname)
+            logger.info('keyword scanning index: %s', fname)
             hits = scan(
                 self.conn, index=self.index, doc_type=self.type,
                 query={
@@ -587,10 +628,16 @@ class ElasticStore(object):
         'Retrieve the field mappings. Useful for debugging.'
         maps = {}
         for fname, config in self.indexes.iteritems():
-            maps[fname] = {
+            maps[fname_to_idx_name(fname)] = {
                 'type': config['es_index_type'],
                 'store': False,
                 'index': 'not_analyzed',
+            }
+        for fname in self.fulltext_indexes:
+            maps[fname_to_full_idx_name(fname)] = {
+                'type': 'string',
+                'store': False,
+                'index': 'analyzed',
             }
         return maps
 
@@ -615,24 +662,36 @@ class ElasticStore(object):
                 name = x
                 features = [x]
                 index_type = 'integer'
-            self.indexes[fname_to_idx_name(name)] = {
+            self.indexes[name] = {
                 'feature_names': features,
                 'es_index_type': index_type,
             }
             for fname in features:
                 self.indexed_features.add(fname)
 
-    def _fc_index_disjunction_from_query(self, query_fc, idx_name):
+    def _fc_index_disjunction_from_query(self, query_fc, fname):
         'Creates a disjunction for keyword scan queries.'
-        fname = idx_name_to_fname(idx_name)
         if len(query_fc.get(fname, [])) == 0:
             return []
         terms = query_fc[fname].keys()
 
         disj = []
-        for fname in self.indexes[idx_name]['feature_names']:
+        for fname in self.indexes[fname]['feature_names']:
             disj.append({'terms': {fname_to_idx_name(fname): terms}})
         return disj
+
+    def fc_to_dict(self, fc):
+        d = {}
+        for name, feat in fc.to_dict().iteritems():
+            if name not in self.fulltext_indexes:
+                d[name] = base64.b64encode(cbor.dumps(feat))
+        return d
+
+    def fc_from_dict(self, fc_dict):
+        d = {}
+        for name, feat in fc_dict.iteritems():
+            d[name] = cbor.loads(base64.b64decode(feat))
+        return FC(d)
 
 
 class ElasticStoreSync(ElasticStore):
@@ -651,20 +710,6 @@ class ElasticStoreSync(ElasticStore):
     def delete(self, *args, **kwargs):
         super(ElasticStoreSync, self).delete(*args, **kwargs)
         self.sync()
-
-
-def fc_to_dict(fc):
-    d = {}
-    for name, feat in fc.to_dict().iteritems():
-        d[name] = base64.b64encode(cbor.dumps(feat))
-    return d
-
-
-def fc_from_dict(fc_dict):
-    d = {}
-    for name, feat in fc_dict.iteritems():
-        d[name] = cbor.loads(base64.b64decode(feat))
-    return FC(d)
 
 
 def eid(s):
@@ -694,3 +739,11 @@ def idx_name_to_fname(idx_name):
 
 def fname_to_idx_name(fname):
     return u'idx_%s' % fname.decode('utf-8')
+
+
+def full_idx_name_to_fname(idx_name):
+    return idx_name[9:]
+
+
+def fname_to_full_idx_name(fname):
+    return u'full_idx_%s' % fname.decode('utf-8')

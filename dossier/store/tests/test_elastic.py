@@ -5,6 +5,7 @@
 '''
 from __future__ import absolute_import, division, print_function
 import logging
+from operator import itemgetter
 
 import pytest
 
@@ -35,6 +36,7 @@ def fcs():
             'the': 1,
             'boss': 1,
         },
+        'body': u"The screen door slams, Mary's dress sways",
     })), ('patti', FC({
         'NAME': {
             'Patti Scialfa': 1,
@@ -43,6 +45,7 @@ def fcs():
             'patti': 10,
             'scialfa': 1,
         },
+        'body': u"I come from down in the valley",
     })), ('big-man', FC({
         'NAME': {
             'Clarence Clemons': 8,
@@ -55,12 +58,14 @@ def fcs():
             'big': 1,
             'man': 1,
         },
+        'body': u"Drinking warm beer in the soft summer rain",
     }))]
 
 
 def create_test_store(host, namespace):
     return ElasticStoreSync(
         hosts=host, namespace=namespace,
+        fulltext_indexes=['body'],
         feature_indexes=[{
             'NAME': {'es_index_type': 'string', 'feature_names': ['NAME']},
         }, {
@@ -309,3 +314,21 @@ def test_index_mapping_raw_scan(elastic_address, namespace_string, fcs):
         == frozenset(['boss'])
     assert frozenset(store.index_scan_ids('NAME', 'clarence')) \
         == frozenset(['big-man'])
+
+
+def test_fulltext_scan(store, fcs):
+    store.put(fcs)
+    assert frozenset(map(itemgetter(1),
+                         store.fulltext_scan_ids('body', u"valley"))) \
+        == frozenset(['patti'])
+    assert frozenset(map(itemgetter(1),
+                         store.fulltext_scan_ids('body', u"in"))) \
+        == frozenset(['patti', 'big-man'])
+    assert frozenset(map(itemgetter(1),
+                         store.fulltext_scan_ids('body', u"mary's"))) \
+        == frozenset(['boss'])
+
+
+def test_fulltext_not_stored(store, fcs):
+    store.put(fcs)
+    assert 'body' not in store.get('boss')
