@@ -326,6 +326,22 @@ class ElasticStore(object):
             yield did(hit['_id'])
 
     def fulltext_scan(self, fname, query, feature_names=None):
+        '''Fulltext search.
+
+        Yields an iterable of triples (score, identifier, FC)
+        corresponding to the search results of the fulltext search
+        in ``query``. This will only search text indexed under the
+        given feature named ``fname``.
+
+        :param str fname:
+          The feature to search.
+        :param unicode query:
+          The query.
+        :param [str] feature_names:
+          A list of feature names to retrieve. When ``None``, all
+          features are retrieved. Wildcards are allowed.
+        :rtype: Iterable of ``(score, content_id, FC)``
+        '''
         it = self._fulltext_scan(fname, query, feature_names=feature_names)
         for hit in it:
             yield hit['_score'], \
@@ -333,6 +349,19 @@ class ElasticStore(object):
                 self.fc_from_dict(hit['_source']['fc'])
 
     def fulltext_scan_ids(self, fname, query):
+        '''Fulltext search for identifiers.
+
+        Yields an iterable of triples (score, identifier)
+        corresponding to the search results of the fulltext search
+        in ``query``. This will only search text indexed under the
+        given feature named ``fname``.
+
+        :param str fname:
+          The feature to search.
+        :param unicode query:
+          The query.
+        :rtype: Iterable of ``(score, content_id)``
+        '''
         it = self._fulltext_scan(fname, query)
         for hit in it:
             yield hit['_score'], did(hit['_id'])
@@ -426,9 +455,6 @@ class ElasticStore(object):
     def _fulltext_scan(self, fname, query, feature_names=None):
         if fname not in self.fulltext_indexes:
             raise KeyError(fname)
-        if not isinstance(query, unicode):
-            raise ValueError('query must be a unicode string, but it is: %r'
-                             % type(query))
         logger.info('fulltext scanning: %s', fname)
         query = {
             'query': {'match': {fname_to_full_idx_name(fname): query}},
