@@ -539,13 +539,18 @@ class ElasticStore(object):
 
     def _create_index(self):
         'Create the index'
-        self.conn.indices.create(
-            index=self.index, timeout=60, request_timeout=60, body={
-                'settings': {
-                    'number_of_shards': self.shards,
-                    'number_of_replicas': self.replicas,
-                },
-            })
+        try:
+            self.conn.indices.create(
+                index=self.index, timeout=60, request_timeout=60, body={
+                    'settings': {
+                        'number_of_shards': self.shards,
+                        'number_of_replicas': self.replicas,
+                    },
+                })
+        except TransportError:
+            # Hope that this is an "index already exists" error...
+            logger.warn(exc_info=True)
+            pass
 
     def _create_mappings(self):
         'Create the field type mapping.'
