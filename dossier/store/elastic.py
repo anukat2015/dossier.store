@@ -325,13 +325,20 @@ class ElasticStore(object):
         for hit in resp:
             yield did(hit['_id'])
 
-    def fulltext_scan(self, fname, query, feature_names=None):
+    def fulltext_scan(self, fname, query, feature_names=None,
+                      preserve_order=False):
         '''Fulltext search.
 
         Yields an iterable of triples (score, identifier, FC)
         corresponding to the search results of the fulltext search
         in ``query``. This will only search text indexed under the
         given feature named ``fname``.
+
+        Note that, unless ``preserve_order`` is set to True, the
+        ``score`` will always be 0.0, and the results will be
+        unordered. ``preserve_order`` set to True will cause the
+        results to be scored and be ordered by score, but you should
+        expect to see a decrease in performance.
 
         :param str fname:
           The feature to search.
@@ -342,13 +349,14 @@ class ElasticStore(object):
           features are retrieved. Wildcards are allowed.
         :rtype: Iterable of ``(score, content_id, FC)``
         '''
-        it = self._fulltext_scan(fname, query, feature_names=feature_names)
+        it = self._fulltext_scan(fname, query, feature_names=feature_names,
+                                 preserve_order=preserve_order)
         for hit in it:
             yield hit['_score'], \
                 did(hit['_id']), \
                 self.fc_from_dict(hit['_source']['fc'])
 
-    def fulltext_scan_ids(self, fname, query):
+    def fulltext_scan_ids(self, fname, query, preserve_order=False):
         '''Fulltext search for identifiers.
 
         Yields an iterable of triples (score, identifier)
@@ -356,13 +364,19 @@ class ElasticStore(object):
         in ``query``. This will only search text indexed under the
         given feature named ``fname``.
 
+        Note that, unless ``preserve_order`` is set to True, the
+        ``score`` will always be 0.0, and the results will be
+        unordered. ``preserve_order`` set to True will cause the
+        results to be scored and be ordered by score, but you should
+        expect to see a decrease in performance.
+
         :param str fname:
           The feature to search.
         :param unicode query:
           The query.
         :rtype: Iterable of ``(score, content_id)``
         '''
-        it = self._fulltext_scan(fname, query)
+        it = self._fulltext_scan(fname, query, preserve_order=preserve_order)
         for hit in it:
             yield hit['_score'], did(hit['_id'])
 
@@ -452,7 +466,9 @@ class ElasticStore(object):
         '''
         return map(unicode, self.fulltext_indexes)
 
-    def _fulltext_scan(self, fname, query, feature_names=None):
+    def _fulltext_scan(self, fname, query,
+                       preserve_order=False,
+                       feature_names=None):
         if fname not in self.fulltext_indexes:
             raise KeyError(fname)
         logger.info('fulltext scanning: %s', fname)
@@ -461,7 +477,7 @@ class ElasticStore(object):
             '_source': self._source(feature_names),
         }
         return scan(self.conn, index=self.index, doc_type=self.type,
-                    query=query)
+                    query=query, preserve_order=preserve_order)
 
     def _keyword_scan(self, query_id, query_fc, feature_names=None):
         # Why are we running multiple scans? Why are we deduplicating?
