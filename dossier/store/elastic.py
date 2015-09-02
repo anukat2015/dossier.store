@@ -121,7 +121,7 @@ class ElasticStore(object):
         self.replicas = replicas
         self.indexes = OrderedDict()
         self.indexed_features = set()
-        self.fulltext_indexes = set(fulltext_indexes or [])
+        self.fulltext_indexes = list(fulltext_indexes or [])
 
         self._normalize_feature_indexes(feature_indexes)
         if not self.conn.indices.exists(index=self.index):
@@ -207,8 +207,10 @@ class ElasticStore(object):
                     if fname in fc:
                         idxs[fname_to_idx_name(fname)].extend(fc[fname])
                 for fname in self.fulltext_indexes:
-                    if isinstance(fc.get(fname), unicode):
-                        idxs[fname_to_full_idx_name(fname)] = fc[fname]
+                    if fname in fc:
+                        idxs[fname_to_full_idx_name(fname)].extend(fc[fname])
+            # import pprint
+            # pprint.pprint(idxs)
             actions.append({
                 '_index': self.index,
                 '_type': self.type,
@@ -325,8 +327,8 @@ class ElasticStore(object):
         for hit in resp:
             yield did(hit['_id'])
 
-    def fulltext_scan(self, fname, query, feature_names=None,
-                      preserve_order=False):
+    def fulltext_scan(self, query_id=None, query_fc=None, feature_names=None,
+                      preserve_order=True):
         '''Fulltext search.
 
         Yields an iterable of triples (score, identifier, FC)
@@ -349,14 +351,17 @@ class ElasticStore(object):
           features are retrieved. Wildcards are allowed.
         :rtype: Iterable of ``(score, content_id, FC)``
         '''
-        it = self._fulltext_scan(fname, query, feature_names=feature_names,
+        it = self._fulltext_scan(query_id, query_fc,
+                                 feature_names=feature_names,
                                  preserve_order=preserve_order)
         for hit in it:
-            yield hit['_score'], \
-                did(hit['_id']), \
-                self.fc_from_dict(hit['_source']['fc'])
+            fc = self.fc_from_dict(hit['_source']['fc'])
+            import pprint
+            pprint.pprint((hit['_score'], fc['#NAME']))
+            yield hit['_score'], did(hit['_id']), fc
 
-    def fulltext_scan_ids(self, fname, query, preserve_order=False):
+    def fulltext_scan_ids(self, query_id=None, query_fc=None,
+                          preserve_order=True):
         '''Fulltext search for identifiers.
 
         Yields an iterable of triples (score, identifier)
@@ -376,7 +381,8 @@ class ElasticStore(object):
           The query.
         :rtype: Iterable of ``(score, content_id)``
         '''
-        it = self._fulltext_scan(fname, query, preserve_order=preserve_order)
+        it = self._fulltext_scan(query_id, query_fc, feature_names=False,
+                                 preserve_order=preserve_order)
         for hit in it:
             yield hit['_score'], did(hit['_id'])
 
@@ -402,7 +408,8 @@ class ElasticStore(object):
         it = self._keyword_scan(query_id, query_fc,
                                 feature_names=feature_names)
         for hit in it:
-            yield did(hit['_id']), self.fc_from_dict(hit['_source']['fc'])
+            fc = self.fc_from_dict(hit['_source']['fc'])
+            yield did(hit['_id']), fc
 
     def keyword_scan_ids(self, query_id=None, query_fc=None):
         '''Keyword scan for ids.
@@ -466,18 +473,44 @@ class ElasticStore(object):
         '''
         return map(unicode, self.fulltext_indexes)
 
-    def _fulltext_scan(self, fname, query,
-                       preserve_order=False,
+    def _fulltext_scan(self, query_id, query_fc, preserve_order=True,
                        feature_names=None):
-        if fname not in self.fulltext_indexes:
-            raise KeyError(fname)
-        logger.info('fulltext scanning: %s', fname)
-        query = {
-            'query': {'match': {fname_to_full_idx_name(fname): query}},
-            '_source': self._source(feature_names),
-        }
-        return scan(self.conn, index=self.index, doc_type=self.type,
-                    query=query, preserve_order=preserve_order)
+        query_fc = self.get_query_fc(query_id, query_fc)
+        ids = set([] if query_id is None else [eid(query_id)])
+        for fname in self.fulltext_indexes:
+            qvals = query_fc.get(fname, {}).keys()
+            if len(qvals) == 0:
+                continue
+            query = {
+                'filtered': {
+                    'query': {
+                        'match': {
+                            fname_to_full_idx_name(fname): ' '.join(qvals),
+                        },
+                    },
+                    'filter': {
+                        'not': {
+                            'ids': {
+                                'values': list(ids),
+                            },
+                        },
+                    },
+                },
+            }
+
+            logger.info('fulltext scanning index: %s, query: %r', fname, qvals)
+            import pprint
+            pprint.pprint(query)
+            hits = scan(
+                self.conn, index=self.index, doc_type=self.type,
+                preserve_order=preserve_order,
+                query={
+                    '_source': self._source(feature_names),
+                    'query': query,
+                })
+            for hit in hits:
+                ids.add(eid(hit['_id']))
+                yield hit
 
     def _keyword_scan(self, query_id, query_fc, feature_names=None):
         # Why are we running multiple scans? Why are we deduplicating?
@@ -503,16 +536,7 @@ class ElasticStore(object):
         #
         # To fix (2), we keep track of all ids we've seen and include them
         # as a filter in subsequent queries.
-        if query_fc is None:
-            if query_id is None:
-                raise ValueError(
-                    'one of query_id or query_fc must not be None')
-            # I think we can actually tell ES to pull the fields directly
-            # from the query server-side, but that's a premature optimization
-            # at this point. ---AG
-            query_fc = self.get(query_id)
-        if query_fc is None:
-            raise KeyError(query_id)
+        query_fc = self.get_query_fc(query_id, query_fc)
         ids = set([] if query_id is None else [eid(query_id)])
         for fname in self.indexes:
             term_disj = self._fc_index_disjunction_from_query(query_fc, fname)
@@ -725,8 +749,12 @@ class ElasticStore(object):
     def fc_to_dict(self, fc):
         d = {}
         for name, feat in fc.to_dict().iteritems():
-            if name not in self.fulltext_indexes:
-                d[name] = base64.b64encode(cbor.dumps(feat))
+            # This is a hack to drop the clean_visible feature because it
+            # is not necessary to store it and it is large. We simply need
+            # to index it.
+            if name == '#clean_visible':
+                continue
+            d[name] = base64.b64encode(cbor.dumps(feat))
         return d
 
     def fc_from_dict(self, fc_dict):
@@ -734,6 +762,16 @@ class ElasticStore(object):
         for name, feat in fc_dict.iteritems():
             d[name] = cbor.loads(base64.b64decode(feat))
         return FC(d)
+
+    def get_query_fc(self, query_id, query_fc):
+        if query_fc is None:
+            if query_id is None:
+                raise ValueError(
+                    'one of query_id or query_fc must not be None')
+            query_fc = self.get(query_id)
+        if query_fc is None:
+            raise KeyError(query_id)
+        return query_fc
 
 
 class ElasticStoreSync(ElasticStore):

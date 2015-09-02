@@ -72,7 +72,7 @@ def fcs_texts(fcs):
             'the': 1,
             'boss': 1,
         },
-        'body': u"The screen door slams, Mary's dress sways",
+        'body': {u"The screen door slams, Mary's dress sways": 1},
     })), ('patti', FC({
         'NAME': {
             'Patti Scialfa': 1,
@@ -81,7 +81,7 @@ def fcs_texts(fcs):
             'patti': 10,
             'scialfa': 1,
         },
-        'body': u"I come from down in the valley",
+        'body': {u"I come from down in the valley": 1},
     })), ('big-man', FC({
         'NAME': {
             'Clarence Clemons': 8,
@@ -94,7 +94,7 @@ def fcs_texts(fcs):
             'big': 1,
             'man': 1,
         },
-        'body': u"Drinking warm beer in the soft summer rain",
+        'body': {u"Drinking warm beer in the soft summer rain": 1},
     }))]
 
 
@@ -354,17 +354,18 @@ def test_index_mapping_raw_scan(elastic_address, namespace_string, fcs):
 
 def test_fulltext_scan(store, fcs_texts):
     store.put(fcs_texts)
+
+    query = FC({u'body': {u'valley': 1}})
     assert frozenset(map(itemgetter(1),
-                         store.fulltext_scan_ids('body', u"valley"))) \
+                         store.fulltext_scan_ids(query_fc=query))) \
         == frozenset(['patti'])
+
+    query = FC({u'body': {u'in': 1}})
     assert frozenset(map(itemgetter(1),
-                         store.fulltext_scan_ids('body', u"in"))) \
+                         store.fulltext_scan_ids(query_fc=query))) \
         == frozenset(['patti', 'big-man'])
+
+    query = FC({u'body': {u"mary's": 1}})
     assert frozenset(map(itemgetter(1),
-                         store.fulltext_scan_ids('body', u"mary's"))) \
+                         store.fulltext_scan_ids(query_fc=query))) \
         == frozenset(['boss'])
-
-
-def test_fulltext_not_stored(store, fcs_texts):
-    store.put(fcs_texts)
-    assert 'body' not in store.get('boss')
