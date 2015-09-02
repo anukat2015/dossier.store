@@ -474,7 +474,7 @@ class ElasticStore(object):
         query_fc = self.get_query_fc(query_id, query_fc)
         ids = set([] if query_id is None else [eid(query_id)])
         for fname in self.fulltext_indexes:
-            qvals = query_fc.get(fname, {}).keys()
+            qvals = map(str, query_fc.get(fname, {}).keys())
             if len(qvals) == 0:
                 continue
             query = {
