@@ -207,7 +207,11 @@ class ElasticStore(object):
                     if fname in fc:
                         idxs[fname_to_idx_name(fname)].extend(fc[fname])
                 for fname in self.fulltext_indexes:
-                    if fname in fc:
+                    if fname not in fc:
+                        continue
+                    if isinstance(fc[fname], basestring):
+                        idxs[fname_to_full_idx_name(fname)] = fc[fname]
+                    else:
                         idxs[fname_to_full_idx_name(fname)].extend(fc[fname])
             actions.append({
                 '_index': self.index,
