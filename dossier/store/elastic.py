@@ -209,8 +209,6 @@ class ElasticStore(object):
                 for fname in self.fulltext_indexes:
                     if fname in fc:
                         idxs[fname_to_full_idx_name(fname)].extend(fc[fname])
-            # import pprint
-            # pprint.pprint(idxs)
             actions.append({
                 '_index': self.index,
                 '_type': self.type,
@@ -356,8 +354,6 @@ class ElasticStore(object):
                                  preserve_order=preserve_order)
         for hit in it:
             fc = self.fc_from_dict(hit['_source']['fc'])
-            import pprint
-            pprint.pprint((hit['_score'], fc['#NAME']))
             yield hit['_score'], did(hit['_id']), fc
 
     def fulltext_scan_ids(self, query_id=None, query_fc=None,
@@ -499,8 +495,6 @@ class ElasticStore(object):
             }
 
             logger.info('fulltext scanning index: %s, query: %r', fname, qvals)
-            import pprint
-            pprint.pprint(query)
             hits = scan(
                 self.conn, index=self.index, doc_type=self.type,
                 preserve_order=preserve_order,
