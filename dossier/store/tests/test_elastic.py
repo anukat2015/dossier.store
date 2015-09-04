@@ -15,6 +15,8 @@ from dossier.store.elastic import ElasticStoreSync
 
 logger = logging.getLogger(__name__)
 
+NAMESPACE = 'dossier_store_tests'
+
 
 @pytest.yield_fixture  # noqa
 def store(elastic_address, namespace_string):
@@ -101,7 +103,7 @@ def fcs_texts(fcs):
 
 def create_test_store(host, namespace):
     return ElasticStoreSync(
-        hosts=host, namespace=namespace,
+        hosts=host, namespace=NAMESPACE, type=namespace,
         fulltext_indexes=['body'],
         feature_indexes=[{
             'NAME': {'es_index_type': 'string', 'feature_names': ['NAME']},
@@ -322,7 +324,7 @@ def test_scan_ids(store):
 
 def test_index_mapping_keyword(elastic_address, namespace_string, fcs):
     store = ElasticStoreSync(
-        hosts=elastic_address, namespace=namespace_string,
+        hosts=elastic_address, namespace=NAMESPACE, type=namespace_string,
         feature_indexes=[{
             'NAME': {
                 'es_index_type': 'string',
@@ -331,16 +333,19 @@ def test_index_mapping_keyword(elastic_address, namespace_string, fcs):
         }, {
             'boNAME': {'es_index_type': 'string', 'feature_names': []},
         }])
-    store.put(fcs)
+    try:
+        store.put(fcs)
 
-    query = FC({'NAME': {'The Boss': 1, 'clarence': 1}})
-    assert frozenset(store.keyword_scan_ids('ephemeral', query)) \
-        == frozenset(['boss', 'big-man'])
+        query = FC({'NAME': {'The Boss': 1, 'clarence': 1}})
+        assert frozenset(store.keyword_scan_ids('ephemeral', query)) \
+            == frozenset(['boss', 'big-man'])
+    finally:
+        store.delete_all()
 
 
 def test_index_mapping_raw_scan(elastic_address, namespace_string, fcs):
     store = ElasticStoreSync(
-        hosts=elastic_address, namespace=namespace_string,
+        hosts=elastic_address, namespace=NAMESPACE, type=namespace_string,
         feature_indexes=[{
             'NAME': {
                 'es_index_type': 'string',
@@ -349,12 +354,15 @@ def test_index_mapping_raw_scan(elastic_address, namespace_string, fcs):
         }, {
             'boNAME': {'es_index_type': 'string', 'feature_names': []},
         }])
-    store.put(fcs)
+    try:
+        store.put(fcs)
 
-    assert frozenset(store.index_scan_ids('NAME', 'The Boss')) \
-        == frozenset(['boss'])
-    assert frozenset(store.index_scan_ids('NAME', 'clarence')) \
-        == frozenset(['big-man'])
+        assert frozenset(store.index_scan_ids('NAME', 'The Boss')) \
+            == frozenset(['boss'])
+        assert frozenset(store.index_scan_ids('NAME', 'clarence')) \
+            == frozenset(['big-man'])
+    finally:
+        store.delete_all()
 
 
 def test_fulltext_scan(store, fcs_texts):
@@ -379,13 +387,16 @@ def test_fulltext_scan(store, fcs_texts):
 def test_fulltext_mapping_keyword(elastic_address, namespace_string,
                                   fcs_texts):
     store = ElasticStoreSync(
-        hosts=elastic_address, namespace=namespace_string,
+        hosts=elastic_address, namespace=NAMESPACE, type=namespace_string,
         fulltext_indexes=[{
             'body': ['body2'],
         }])
-    store.put(fcs_texts)
+    try:
+        store.put(fcs_texts)
 
-    query = FC({'body': {'vision': 1}})
-    assert frozenset(map(itemgetter(1),
-                         store.fulltext_scan_ids(query_fc=query))) \
-        == frozenset(['boss'])
+        query = FC({'body': {'vision': 1}})
+        assert frozenset(map(itemgetter(1),
+                             store.fulltext_scan_ids(query_fc=query))) \
+            == frozenset(['boss'])
+    finally:
+        store.delete_all()

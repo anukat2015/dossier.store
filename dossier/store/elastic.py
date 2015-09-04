@@ -244,11 +244,12 @@ class ElasticStore(object):
         deletes all FCs with the configured document type
         (defaults to ``fc``).
         '''
-        if self.conn.indices.exists(index=self.index):
-            self.conn.delete_by_query(
-                index=self.index, doc_type=self.type, body={
-                    'query': {'match_all': {}},
-                })
+        try:
+            self.conn.indices.delete_mapping(
+                index=self.index, doc_type=self.type)
+        except TransportError:
+            logger.warn('type %r in index %r already deleted',
+                        self.index, self.type, exc_info=True)
 
     def delete_index(self):
         '''Deletes the underlying ES index.
