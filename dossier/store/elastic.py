@@ -657,7 +657,7 @@ class ElasticStore(object):
                 })
         except TransportError:
             # Hope that this is an "index already exists" error...
-            logger.warn(exc_info=True)
+            logger.warn('index already exists? OK', exc_info=True)
             pass
 
     def _create_mappings(self):
