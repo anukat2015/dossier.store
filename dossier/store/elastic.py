@@ -120,10 +120,12 @@ class ElasticStore(object):
         self.shards = shards
         self.replicas = replicas
         self.indexes = OrderedDict()
+        self.fulltext_indexes = OrderedDict()
         self.indexed_features = set()
-        self.fulltext_indexes = list(fulltext_indexes or [])
+        self.fulltext_indexed_features = set()
 
         self._normalize_feature_indexes(feature_indexes)
+        self._normalize_fulltext_feature_indexes(fulltext_indexes)
         if not self.conn.indices.exists(index=self.index):
             # This can race, but that should be OK.
             # Worst case, we initialize with the same settings more than
@@ -206,7 +208,7 @@ class ElasticStore(object):
                 for fname in self.indexed_features:
                     if fname in fc:
                         idxs[fname_to_idx_name(fname)].extend(fc[fname])
-                for fname in self.fulltext_indexes:
+                for fname in self.fulltext_indexed_features:
                     if fname not in fc:
                         continue
                     if isinstance(fc[fname], basestring):
@@ -471,21 +473,22 @@ class ElasticStore(object):
 
         :rtype: list of ``unicode``
         '''
-        return map(unicode, self.fulltext_indexes)
+        return map(unicode, self.fulltext_indexes.iterkeys())
 
     def _fulltext_scan(self, query_id, query_fc, preserve_order=True,
                        feature_names=None):
         query_fc = self.get_query_fc(query_id, query_fc)
         ids = set([] if query_id is None else [eid(query_id)])
-        for fname in self.fulltext_indexes:
+        for fname, features in self.fulltext_indexes.iteritems():
             qvals = map(unicode, query_fc.get(fname, {}).keys())
             if len(qvals) == 0:
                 continue
             query = {
                 'filtered': {
                     'query': {
-                        'match': {
-                            fname_to_full_idx_name(fname): ' '.join(qvals),
+                        'multi_match': {
+                            'query': ' '.join(qvals),
+                            'fields': map(fname_to_full_idx_name, features),
                         },
                     },
                     'filter': {
@@ -691,13 +694,15 @@ class ElasticStore(object):
     def _get_index_mappings(self):
         'Retrieve the field mappings. Useful for debugging.'
         maps = {}
-        for fname, config in self.indexes.iteritems():
+        for fname in self.indexed_features:
+            config = self.indexes.get(fname, {})
+            print(fname, config)
             maps[fname_to_idx_name(fname)] = {
-                'type': config['es_index_type'],
+                'type': config.get('es_index_type', 'integer'),
                 'store': False,
                 'index': 'not_analyzed',
             }
-        for fname in self.fulltext_indexes:
+        for fname in self.fulltext_indexed_features:
             maps[fname_to_full_idx_name(fname)] = {
                 'type': 'string',
                 'store': False,
@@ -710,6 +715,19 @@ class ElasticStore(object):
         mapping = self.conn.indices.get_mapping(
             index=self.index, doc_type=self.type)
         return mapping[self.index]['mappings'][self.type]['properties']
+
+    def _normalize_fulltext_feature_indexes(self, fulltext_indexes):
+        for x in fulltext_indexes or []:
+            if isinstance(x, Mapping):
+                assert len(x) == 1, 'only one mapping per index entry allowed'
+                name = x.keys()[0]
+                features = x[name]
+            else:
+                name = x
+                features = [x]
+            self.fulltext_indexes[name] = features
+            for fname in features:
+                self.fulltext_indexed_features.add(fname)
 
     def _normalize_feature_indexes(self, feature_indexes):
         for x in feature_indexes or []:

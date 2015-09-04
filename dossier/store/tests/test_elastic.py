@@ -73,6 +73,7 @@ def fcs_texts(fcs):
             'boss': 1,
         },
         'body': {u"The screen door slams, Mary's dress sways": 1},
+        'body2': {u"Like a vision she dances across the porch": 1},
     })), ('patti', FC({
         'NAME': {
             'Patti Scialfa': 1,
@@ -327,6 +328,8 @@ def test_index_mapping_keyword(elastic_address, namespace_string, fcs):
                 'es_index_type': 'string',
                 'feature_names': ['NAME', 'boNAME'],
             },
+        }, {
+            'boNAME': {'es_index_type': 'string', 'feature_names': []},
         }])
     store.put(fcs)
 
@@ -343,6 +346,8 @@ def test_index_mapping_raw_scan(elastic_address, namespace_string, fcs):
                 'es_index_type': 'string',
                 'feature_names': ['NAME', 'boNAME'],
             },
+        }, {
+            'boNAME': {'es_index_type': 'string', 'feature_names': []},
         }])
     store.put(fcs)
 
@@ -366,6 +371,21 @@ def test_fulltext_scan(store, fcs_texts):
         == frozenset(['patti', 'big-man'])
 
     query = FC({u'body': {u"mary's": 1}})
+    assert frozenset(map(itemgetter(1),
+                         store.fulltext_scan_ids(query_fc=query))) \
+        == frozenset(['boss'])
+
+
+def test_fulltext_mapping_keyword(elastic_address, namespace_string,
+                                  fcs_texts):
+    store = ElasticStoreSync(
+        hosts=elastic_address, namespace=namespace_string,
+        fulltext_indexes=[{
+            'body': ['body2'],
+        }])
+    store.put(fcs_texts)
+
+    query = FC({'body': {'vision': 1}})
     assert frozenset(map(itemgetter(1),
                          store.fulltext_scan_ids(query_fc=query))) \
         == frozenset(['boss'])
