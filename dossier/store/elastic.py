@@ -114,7 +114,7 @@ class ElasticStore(object):
                 'ElasticStore needs a namespace defined.')
         if type is None:
             type = unicode(uuid.uuid4())
-        self.conn = Elasticsearch(hosts=hosts)
+        self.conn = Elasticsearch(hosts=hosts, timeout=60, request_timeout=60)
         self.index = 'fcs_%s' % namespace
         self.type = type
         self.shards = shards
