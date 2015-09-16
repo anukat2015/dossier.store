@@ -488,7 +488,6 @@ class ElasticStore(object):
                 'filtered': {
                     'query': {
                         'multi_match': {
-                            'type': 'phrase',
                             'query': ' '.join(qvals),
                             'fields': map(fname_to_full_idx_name, features),
                         },
