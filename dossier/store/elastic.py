@@ -8,6 +8,7 @@ from __future__ import absolute_import, division, print_function
 import base64
 from collections import OrderedDict, Mapping, defaultdict
 import logging
+import regex as re
 import uuid
 
 import cbor
@@ -484,12 +485,25 @@ class ElasticStore(object):
             qvals = map(unicode, query_fc.get(fname, {}).keys())
             if len(qvals) == 0:
                 continue
+            qmatches = []
+            qfields = map(fname_to_full_idx_name, features)
+            for qval in qvals:
+                if re.search('\p{Punct}', qval):
+                    match_type = 'phrase'
+                else:
+                    match_type = 'best_fields'
+                qmatches.append({
+                    'multi_match': {
+                        'type': match_type,
+                        'query': qval,
+                        'fields': qfields,
+                    }
+                })
             query = {
                 'filtered': {
                     'query': {
-                        'multi_match': {
-                            'query': ' '.join(qvals),
-                            'fields': map(fname_to_full_idx_name, features),
+                        'bool': {
+                            'should': qmatches,
                         },
                     },
                     'filter': {
