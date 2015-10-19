@@ -38,7 +38,7 @@ setup(
     ],
     install_requires=[
         'dossier.fc',
-        'elasticsearch',
+        'elasticsearch<2',
         'kvlayer>=0.5.7',
         'pytest',
         'pytest-diffeo >= 0.1.4',
