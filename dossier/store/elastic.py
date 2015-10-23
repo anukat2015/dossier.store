@@ -804,6 +804,28 @@ class ElasticStore(object):
             raise KeyError(query_id)
         return query_fc
 
+    def fc_bytes(self, fc_dict):
+        '''Take a feature collection in dict form and count its size in bytes.
+
+        '''
+        num_bytes = 0
+        for _, feat in fc_dict.iteritems():
+            num_bytes += len(feat)
+        return num_bytes
+
+    def count_bytes(self, filter_preds):
+        '''Count bytes of all feature collections whose key satisfies one of
+        the predicates in ``filter_preds``. The byte counts are binned
+        by filter predicate.
+        '''
+        num_bytes = defaultdict(int)
+        for hit in self._scan():
+            for filter_pred in filter_preds:
+                if filter_pred(did(hit['_id'])):
+                    num_bytes[filter_pred] += self.fc_bytes(
+                        hit['_source']['fc'])
+        return num_bytes
+
 
 class ElasticStoreSync(ElasticStore):
     '''Synchronous ElasticSearch backend.
