@@ -334,7 +334,7 @@ class ElasticStore(object):
             yield did(hit['_id'])
 
     def fulltext_scan(self, query_id=None, query_fc=None, feature_names=None,
-                      preserve_order=True):
+                      preserve_order=True, indexes=None):
         '''Fulltext search.
 
         Yields an iterable of triples (score, identifier, FC)
@@ -359,13 +359,14 @@ class ElasticStore(object):
         '''
         it = self._fulltext_scan(query_id, query_fc,
                                  feature_names=feature_names,
-                                 preserve_order=preserve_order)
+                                 preserve_order=preserve_order,
+                                 indexes=indexes)
         for hit in it:
             fc = self.fc_from_dict(hit['_source']['fc'])
             yield hit['_score'], did(hit['_id']), fc
 
     def fulltext_scan_ids(self, query_id=None, query_fc=None,
-                          preserve_order=True):
+                          preserve_order=True, indexes=None):
         '''Fulltext search for identifiers.
 
         Yields an iterable of triples (score, identifier)
@@ -386,7 +387,8 @@ class ElasticStore(object):
         :rtype: Iterable of ``(score, content_id)``
         '''
         it = self._fulltext_scan(query_id, query_fc, feature_names=False,
-                                 preserve_order=preserve_order)
+                                 preserve_order=preserve_order,
+                                 indexes=indexes)
         for hit in it:
             yield hit['_score'], did(hit['_id'])
 
@@ -478,10 +480,21 @@ class ElasticStore(object):
         return map(unicode, self.fulltext_indexes.iterkeys())
 
     def _fulltext_scan(self, query_id, query_fc, preserve_order=True,
-                       feature_names=None):
+                       feature_names=None, indexes=None):
         query_fc = self.get_query_fc(query_id, query_fc)
         ids = set([] if query_id is None else [eid(query_id)])
-        for fname, features in self.fulltext_indexes.iteritems():
+
+        indexes_to_search = indexes
+        if indexes_to_search is None:
+            indexes_to_search = self.fulltext_indexes.keys()
+
+        for fname in indexes_to_search:
+            if fname not in self.fulltext_indexes:
+                raise ValueError(
+                    'Trying to scan on non-indexed feature %s' % fname)
+
+            features = self.fulltext_indexes[fname]
+
             qvals = map(unicode, query_fc.get(fname, {}).keys())
             if len(qvals) == 0:
                 continue

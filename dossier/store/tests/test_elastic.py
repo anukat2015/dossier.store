@@ -383,6 +383,28 @@ def test_fulltext_scan(store, fcs_texts):
                          store.fulltext_scan_ids(query_fc=query))) \
         == frozenset(['boss'])
 
+def test_fulltext_scan_indexes(store, fcs_texts):
+    store.put(fcs_texts)
+
+    # Make sure we search features in whitelist.
+    query = FC({u'body': {u'valley': 1}})
+    assert frozenset(map(itemgetter(1),
+                         store.fulltext_scan_ids(query_fc=query,
+                                                 indexes=['body']))) \
+        == frozenset(['patti'])
+
+    # Make sure we dont search features out of whitelist.
+    query = FC({u'body': {u'in': 1}})
+    ids = list(store.fulltext_scan_ids(query_fc=query,
+                                       indexes=[]))
+    assert len(ids) == 0
+
+    # Make sure we raise ValueError when trying to scan non-indexed feature.
+    query = FC({u'body': {u'in': 1}})
+    with pytest.raises(ValueError):
+        ids = list(store.fulltext_scan_ids(query_fc=query,
+                                           indexes=['body', 'i-dont-exist']))
+
 
 def test_fulltext_mapping_keyword(elastic_address, namespace_string,
                                   fcs_texts):
